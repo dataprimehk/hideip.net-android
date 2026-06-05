@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/haptics.dart';
 import '../state/app_state.dart';
 import 'brand.dart';
+import 'connection_mark.dart';
 import 'import_screen.dart';
 import 'logo_mark.dart';
 import 'magnetic_button.dart';
@@ -143,7 +144,6 @@ class _StatusOrb extends StatelessWidget {
     final t = context.brand;
     final connected = state.isConnected;
     final busy = state.isBusy;
-    final color = connected ? t.primary : t.mutedForeground;
     final label = busy
         ? 'Connecting…'
         : connected
@@ -151,20 +151,7 @@ class _StatusOrb extends StatelessWidget {
             : 'Disconnected';
     return Column(
       children: [
-        Container(
-          width: 128,
-          height: 128,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: color.withValues(alpha: 0.12),
-            border: Border.all(color: color, width: 2),
-          ),
-          child: Icon(
-            connected ? Icons.shield : Icons.shield_outlined,
-            size: 56,
-            color: color,
-          ),
-        ),
+        ConnectionMark(state: state.conn, size: 160),
         const SizedBox(height: 18),
         Text(label,
             style: TextStyle(
