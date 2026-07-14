@@ -11,7 +11,7 @@ class Haptics {
   /// Confirming press for a primary action (tap Connect / Disconnect / Import).
   static void tap() => HapticFeedback.lightImpact();
 
-  /// Success landing — the tunnel came up.
+  /// Success landing: the tunnel came up.
   static void success() => HapticFeedback.mediumImpact();
 
   /// Something failed (connect error, parse error).

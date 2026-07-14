@@ -4,7 +4,7 @@ import 'brand.dart';
 
 /// hideip.net pill brand mark, ported from `brand-kit/LogoMark.tsx`.
 ///
-/// Renders `102. ▪ ▪ ▪ .13.37` — the three blue squares stand in for the
+/// Renders `102. ▪ ▪ ▪ .13.37`: the three blue squares stand in for the
 /// hidden octets of an IP address. A bordered pill with mono octets around
 /// three rounded accent squares. This is the brand's primary visual hook.
 class LogoMark extends StatelessWidget {

@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:http/http.dart' as http;
 
-/// Fetches the device's current public IP — used on the home screen as proof
+/// Fetches the device's current public IP, used on the home screen as proof
 /// that traffic is (or isn't) going through the tunnel.
 ///
 /// TODO(hideip): replace [_endpoint] with hideip.net's own IP endpoint once a

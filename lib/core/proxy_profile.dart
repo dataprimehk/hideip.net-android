@@ -1,7 +1,7 @@
 /// One parsed proxy server. Holds the sing-box outbound map plus display info.
 ///
 /// [outbound] is a sing-box outbound object (e.g. {"type":"vless", ...}) WITHOUT
-/// a "tag" — the tag is assigned by [SingboxConfig] when the full config is built,
+/// a "tag"; the tag is assigned by [SingboxConfig] when the full config is built,
 /// so a profile can be reused under different tags. [name] is the human label
 /// (from the link fragment or subscription), [protocol] the scheme (vless, etc.).
 class ProxyProfile {

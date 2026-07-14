@@ -201,7 +201,7 @@ class AppState extends ChangeNotifier {
     final s = await VpnController.status();
     if (s.error != null && s.error!.isNotEmpty) {
       // On the initial cold-start reconcile, a native error while nothing is
-      // running is stale (left over from a previous session) — discard it.
+      // running is stale (left over from a previous session); discard it.
       if (initial && !s.running) return;
       _setError(s.error!);
       _statusPoll?.cancel();

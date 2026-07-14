@@ -7,8 +7,8 @@ import 'brand.dart';
 
 /// The animated connection mark on the home screen.
 ///
-/// Drawn natively (CustomPaint) so the brand pill mark — the three squares that
-/// stand for hidden IP octets — stays readable in every state. The earlier
+/// Drawn natively (CustomPaint) so the brand pill mark, the three squares that
+/// stand for hidden IP octets, stays readable in every state. The earlier
 /// Lottie export filled the whole disc with a solid green blob that swallowed
 /// the squares; this keeps them as the hero element.
 ///

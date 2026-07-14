@@ -189,7 +189,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             downlinkTotal = message.downlinkTotal
         }
 
-        // Unused command channels — we only registered CommandStatus.
+        // Unused command channels; we only registered CommandStatus.
         override fun clearLogs() {}
         override fun writeLogs(messages: LogIterator?) {}
         override fun writeGroups(groups: OutboundGroupIterator?) {}
@@ -233,7 +233,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         }
         commandServer = null
 
-        // Close OUR retained fd — we kept the establish() owner (a dup went to the
+        // Close OUR retained fd; we kept the establish() owner (a dup went to the
         // core). Android tears down the tun interface (and removes the status-bar
         // VPN key) only when the establish() owner's fd is closed. This is the
         // step that actually brings the tunnel down.
@@ -259,7 +259,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
         // Remove the foreground notification and stop the service for good.
         // stopSelf(startId) matches the exact start command so Android actually
-        // DESTROYS the service (onDestroy) — a bare stopSelf() leaves it alive if
+        // DESTROYS the service (onDestroy); a bare stopSelf() leaves it alive if
         // any start command is unmatched, and the VpnService instance staying
         // alive is what kept tun0 + the status-bar VPN key up after disconnect.
         stopForegroundCompat()
@@ -400,7 +400,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 val addrs = ArrayList<String>()
                 for (ia in nif.interfaceAddresses) {
                     val host = ia.address?.hostAddress ?: continue
-                    // Strip any scope id (e.g. fe80::1%wlan0) — Go can't parse it.
+                    // Strip any scope id (e.g. fe80::1%wlan0); Go can't parse it.
                     val clean = host.substringBefore('%')
                     addrs.add("$clean/${ia.networkPrefixLength}")
                 }
@@ -445,7 +445,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         // network and report THAT (never the VPN itself). registerDefaultNetwork-
         // Callback() needs no special permission, and routing the decision through
         // pushBestUnderlyingInterface() means even when the callback fires for our
-        // own tun0 we still hand the core wlan0/cellular — no loop, no race.
+        // own tun0 we still hand the core wlan0/cellular; no loop, no race.
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 pushBestUnderlyingInterface()
@@ -460,7 +460,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
             }
 
             override fun onLost(network: Network) {
-                // A network dropped — re-resolve; if none remain, report "none".
+                // A network dropped: re-resolve; if none remain, report "none".
                 if (!pushBestUnderlyingInterface()) {
                     try {
                         interfaceListener?.updateDefaultInterface("", -1, false, false)
@@ -527,7 +527,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         val cm = connectivityManager ?: return false
         try {
             val capabilities = caps ?: cm.getNetworkCapabilities(network)
-            // Never report our own VPN tunnel as the underlying interface — that
+            // Never report our own VPN tunnel as the underlying interface; that
             // would make sing-box bind outbound sockets back into tun0 (a loop).
             if (capabilities != null &&
                 !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)

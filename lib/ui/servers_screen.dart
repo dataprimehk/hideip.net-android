@@ -123,7 +123,7 @@ class _PingBadge extends StatelessWidget {
     final t = context.brand;
     final r = result;
     if (r == null) {
-      return Text('—', style: TextStyle(color: t.mutedForeground));
+      return Text('--', style: TextStyle(color: t.mutedForeground));
     }
     if (r is PingFail) {
       return Row(

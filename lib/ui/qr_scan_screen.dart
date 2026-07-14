@@ -9,7 +9,7 @@ import 'brand.dart';
 ///
 /// Backed by [flutter_zxing] (pure ZXing via FFI). Unlike ML Kit based
 /// scanners it has no Google Play Services dependency, so it decodes on
-/// GrapheneOS and other no-GMS devices exactly as on stock Android — which
+/// GrapheneOS and other no-GMS devices exactly as on stock Android, which
 /// matters for a privacy app whose users often run de-Googled ROMs.
 class QrScanScreen extends StatefulWidget {
   const QrScanScreen({super.key});
@@ -48,7 +48,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
           ReaderWidget(
             codeFormat: Format.qrCode,
             onScan: _onScan,
-            // Privacy: never reach into the photo library — links come from
+            // Privacy: never reach into the photo library; links come from
             // the camera or paste, not the gallery.
             showGallery: false,
             showScannerOverlay: false,

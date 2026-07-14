@@ -189,7 +189,7 @@ void main() {
     });
 
     test('with base64-encoded credentials (SIP002-style userinfo)', () {
-      // socks://base64("hideip:secretpw")@host:port — emitted by some clients.
+      // socks://base64("hideip:secretpw")@host:port, emitted by some clients.
       // Regression: the whole blob used to land in `username` with no password,
       // so auth silently failed against any SOCKS server with credentials.
       const userinfo = 'aGlkZWlwOnNlY3JldHB3'; // base64("hideip:secretpw")

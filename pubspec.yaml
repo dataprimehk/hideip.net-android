@@ -40,7 +40,7 @@ dependencies:
   # Public-IP lookup (proof the tunnel works).
   http: ^1.2.2
   # QR scanning via pure ZXing (FFI). No Google ML Kit / Play Services
-  # dependency, so it works on GrapheneOS and other no-GMS devices too —
+  # dependency, so it works on GrapheneOS and other no-GMS devices too;
   # mobile_scanner's ML Kit backend returns null without Play Services.
   flutter_zxing: ^2.3.0
 

@@ -556,7 +556,7 @@ class ShareLinkParser {
   /// it: if that yields a `user:pass` pair we use it; otherwise the raw value is
   /// a bare username. This keeps plain `user:pass` working while also accepting
   /// the encoded form (without it, SOCKS/HTTP auth profiles silently fail to
-  /// authenticate — the whole blob lands in `username`).
+  /// authenticate; the whole blob lands in `username`).
   static (String?, String?) _userPass(Uri uri) {
     final info = uri.userInfo;
     if (info.isEmpty) return (null, null);

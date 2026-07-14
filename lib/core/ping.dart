@@ -15,7 +15,7 @@ class PingFail extends PingResult {
   const PingFail();
 }
 
-/// Measures TCP connect time to [host]:[port] — a practical proxy for server
+/// Measures TCP connect time to [host]:[port], a practical proxy for server
 /// latency that needs no special permission and no tunnel. This is the round
 /// trip to *open* a socket, not an ICMP echo (Android blocks raw ICMP), so it
 /// reflects reachability + RTT the way the proxy handshake will experience it.
