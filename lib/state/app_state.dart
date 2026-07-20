@@ -1,15 +1,19 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
 
 import '../core/haptics.dart';
 import '../core/ip_lookup.dart';
+import '../core/location.dart';
 import '../core/ping.dart';
+import '../core/premium.dart';
 import '../core/profile_store.dart';
 import '../core/proxy_profile.dart';
 import '../core/share_link_parser.dart';
 import '../core/singbox_config.dart';
 import '../core/subscription.dart';
+import '../core/ui_prefs.dart';
 import '../vpn_controller.dart';
 
 enum ConnState { disconnected, connecting, connected, error }
@@ -23,12 +27,19 @@ class AppState extends ChangeNotifier {
   ConnState _conn = ConnState.disconnected;
   String? _error;
   String? _publicIp;
+  IpGeo? _userGeo;
   bool _ipLoading = false;
   Timer? _statusPoll;
   VpnStats _stats = VpnStats.zero;
   // Latency probes, keyed by "host:port". Absent = never tested.
   final Map<String, PingResult> _pings = {};
   bool _pinging = false;
+  UiPrefs _prefs = const UiPrefs();
+  // Becomes mutable once the store integration can change it.
+  final Premium _premium = const Premium.none();
+  String? _toast;
+  Timer? _toastTimer;
+  bool _ready = false;
 
   List<ProxyProfile> get profiles => List.unmodifiable(_profiles);
   int get selectedIndex => _selected;
@@ -37,29 +48,116 @@ class AppState extends ChangeNotifier {
   ConnState get conn => _conn;
   String? get error => _error;
   String? get publicIp => _publicIp;
+
+  /// Where the user's real IP geolocates (the map's "you" pin). Only
+  /// refreshed while the tunnel is down; with it up the public IP would
+  /// geolocate to the exit node instead.
+  IpGeo? get userGeo => _userGeo;
   bool get ipLoading => _ipLoading;
   bool get isConnected => _conn == ConnState.connected;
   bool get isBusy => _conn == ConnState.connecting;
   VpnStats get stats => _stats;
   bool get pinging => _pinging;
   PingResult? pingFor(ProxyProfile p) => _pings['${p.server}:${p.port}'];
+  UiPrefs get prefs => _prefs;
+  Premium get premium => _premium;
+  String? get toast => _toast;
+
+  /// True once [init] has loaded persisted state (gates the first frame).
+  bool get ready => _ready;
+
+  /// Display-friendly view over [profiles], in the same order.
+  List<Location> get locations => Location.deriveAll(_profiles);
+
+  /// The location the tunnel would use right now. In auto mode this is the
+  /// lowest-latency probed server (falling back to the persisted selection).
+  Location? get activeLocation {
+    final all = locations;
+    if (all.isEmpty) return null;
+    if (_prefs.autoSelect) {
+      Location? best;
+      int? bestMs;
+      for (final l in all) {
+        final ping = pingFor(l.profile);
+        if (ping is PingOk && (bestMs == null || ping.ms < bestMs)) {
+          bestMs = ping.ms;
+          best = l;
+        }
+      }
+      if (best != null) return best;
+    }
+    if (_selected >= 0 && _selected < all.length) return all[_selected];
+    return all.first;
+  }
+
+  /// Signal level 0-4 for the ping bars.
+  int levelFor(ProxyProfile p) {
+    final ping = pingFor(p);
+    if (ping is! PingOk) return 0;
+    if (ping.ms < 60) return 4;
+    if (ping.ms < 120) return 3;
+    if (ping.ms < 250) return 2;
+    return 1;
+  }
 
   /// Load persisted state + initial IP. Call once at startup.
   Future<void> init() async {
+    _prefs = await UiPrefs.load();
     _profiles.addAll(await ProfileStore.load());
     final savedIdx = await ProfileStore.loadSelectedIndex();
     if (savedIdx >= 0 && savedIdx < _profiles.length) _selected = savedIdx;
+    _ready = true;
     notifyListeners();
     refreshIp();
+    // Latency probes power the Auto choice and the signal bars.
+    pingAll();
     // Reconcile with whatever the native service reports (e.g. after restart).
     // On a cold start we ignore a stale native error when nothing is running:
     // a leftover error from a previous session must not greet the user.
     _syncStatus(initial: true);
+    if (_prefs.autoConnect && _profiles.isNotEmpty && !isConnected) {
+      connect();
+    }
+  }
+
+  // --- Premium -----------------------------------------------------------
+
+  /// Buy the Premium subscription. Returns true when the purchase (and the
+  /// server provisioning that follows it) succeeded. The store integration
+  /// lands together with kPlansAvailable; until then this reports failure so
+  /// the paywall's error state is the worst that can happen if the screen is
+  /// ever reached early.
+  Future<bool> purchasePremium(PremiumPlan plan) async => false;
+
+  /// Re-check the store for an existing subscription.
+  Future<void> restorePurchases() async {
+    showToast(_premium.status == PremiumStatus.none
+        ? 'No purchases to restore'
+        : 'Purchases restored');
+  }
+
+  // --- UI preferences / toast --------------------------------------------
+
+  Future<void> updatePrefs(UiPrefs next) async {
+    _prefs = next;
+    notifyListeners();
+    await next.save();
+  }
+
+  void showToast(String message) {
+    _toast = message;
+    notifyListeners();
+    _toastTimer?.cancel();
+    _toastTimer = Timer(const Duration(milliseconds: 2400), () {
+      _toast = null;
+      notifyListeners();
+    });
   }
 
   @override
   void dispose() {
     _statusPoll?.cancel();
+    _toastTimer?.cancel();
     super.dispose();
   }
 
@@ -86,6 +184,32 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
     return res;
+  }
+
+  /// Add pre-parsed profiles (the redesign import screen parses before
+  /// committing, so the user can review what was detected first).
+  Future<void> addProfiles(List<ProxyProfile> newProfiles,
+      {bool select = false}) async {
+    if (newProfiles.isEmpty) return;
+    _profiles.addAll(newProfiles);
+    if (select || _selected < 0) {
+      _selected = _profiles.length - newProfiles.length;
+      await updatePrefs(_prefs.copyWith(autoSelect: false));
+    }
+    await _persist();
+    notifyListeners();
+    pingAll();
+  }
+
+  /// Explicitly pick a server (turns Auto off), or pass null for Auto.
+  Future<void> selectLocation(Location? loc) async {
+    if (loc == null) {
+      await updatePrefs(_prefs.copyWith(autoSelect: true));
+      Haptics.selection();
+      return;
+    }
+    await updatePrefs(_prefs.copyWith(autoSelect: false));
+    await select(loc.index);
   }
 
   Future<void> select(int index) async {
@@ -134,7 +258,8 @@ class AppState extends ChangeNotifier {
   // --- Connection ------------------------------------------------------------
 
   Future<void> connect() async {
-    final profile = selected;
+    // Auto mode resolves to the best probed server; otherwise the selection.
+    final profile = activeLocation?.profile ?? selected;
     if (profile == null) {
       _setError('Select a server first.');
       return;
@@ -163,6 +288,10 @@ class AppState extends ChangeNotifier {
       Haptics.success();
       notifyListeners();
       refreshIp();
+    } on MissingPluginException {
+      // No native VPN side on this platform yet (iOS before the PacketTunnel
+      // port). Keep the rest of the app usable; only connecting is off-limits.
+      _setError('VPN is not yet supported on this platform.');
     } catch (e) {
       _setError('Failed to connect: $e');
     }
@@ -188,6 +317,13 @@ class AppState extends ChangeNotifier {
     _publicIp = ip;
     _ipLoading = false;
     notifyListeners();
+    if (!isConnected) {
+      final geo = await IpLookup.locate();
+      if (geo != null && !isConnected) {
+        _userGeo = geo;
+        notifyListeners();
+      }
+    }
   }
 
   // --- internals -------------------------------------------------------------

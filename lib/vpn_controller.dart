@@ -24,8 +24,16 @@ class VpnController {
   }
 
   /// Polls native status: {running: bool, error: String?}.
+  /// Platforms without a native side (iOS until the PacketTunnel port lands)
+  /// report a plain "not running" instead of throwing, so the status poll and
+  /// the cold-start reconcile stay quiet there.
   static Future<VpnStatus> status() async {
-    final res = await _channel.invokeMapMethod<String, dynamic>('status');
+    final Map<String, dynamic>? res;
+    try {
+      res = await _channel.invokeMapMethod<String, dynamic>('status');
+    } on MissingPluginException {
+      return const VpnStatus(running: false);
+    }
     return VpnStatus(
       running: res?['running'] as bool? ?? false,
       error: res?['error'] as String?,
@@ -35,7 +43,12 @@ class VpnController {
   /// Polls live traffic counters. Rates are bytes/second, totals cumulative
   /// bytes for the session. All zero when disconnected.
   static Future<VpnStats> stats() async {
-    final res = await _channel.invokeMapMethod<String, dynamic>('stats');
+    final Map<String, dynamic>? res;
+    try {
+      res = await _channel.invokeMapMethod<String, dynamic>('stats');
+    } on MissingPluginException {
+      return VpnStats.zero;
+    }
     int v(String k) => (res?[k] as num?)?.toInt() ?? 0;
     return VpnStats(
       uplink: v('uplink'),

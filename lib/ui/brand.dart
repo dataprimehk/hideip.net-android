@@ -10,6 +10,9 @@ class Brand {
 
   // Font families (registered in pubspec.yaml).
   static const String displayFont = 'Geist';
+
+  /// The wordmark face: Onest, same as the website's .font-wordmark.
+  static const String wordmarkFont = 'Onest';
   static const String bodyFont = 'Inter';
   static const String monoFont = 'JetBrainsMono';
 

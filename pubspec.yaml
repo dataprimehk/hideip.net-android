@@ -81,10 +81,16 @@ flutter:
   # hideip.net brand fonts (self-hosted, matches the website). See
   # ../hideip.net/brand-kit/typography.md: Geist = display/wordmark,
   # Inter = body, JetBrains Mono = numbers (IPs, ports, latencies).
+  assets:
+    - assets/world_geo.json
+
   fonts:
     - family: Geist
       fonts:
         - asset: assets/fonts/Geist-Variable.ttf
+    - family: Onest
+      fonts:
+        - asset: assets/fonts/Onest-Variable.ttf
     - family: Inter
       fonts:
         - asset: assets/fonts/Inter-Variable.ttf
