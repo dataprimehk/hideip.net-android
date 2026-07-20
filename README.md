@@ -1,8 +1,11 @@
-# hideip.net for Android
+# hideip.net
 
-A small, no-account VPN client for Android. It runs a [sing-box](https://github.com/SagerNet/sing-box)
-core inside a `VpnService` tunnel and connects to servers you bring yourself,
-imported from a share link, a QR code, or a subscription URL.
+A small, no-account VPN client. It runs a [sing-box](https://github.com/SagerNet/sing-box)
+core inside a system tunnel (`VpnService` on Android) and connects to servers
+you bring yourself, imported from a share link, a QR code, or a subscription
+URL. Android is the primary platform; an iOS port is underway in this repo
+(the app builds and runs, the packet tunnel extension is still being wired
+to the core).
 
 There is no sign-up and no telemetry. Profiles live on the device. The point is
 to be a clean, auditable front end for a proxy core you already trust, not a
@@ -21,6 +24,9 @@ managed service.
   live up/down traffic counters.
 - Server latency check before you connect.
 - Public-IP readout so you can confirm the tunnel actually changed your exit IP.
+- A world map of exit locations. Tapping a country that has no node yet casts
+  an anonymous vote (just the country code, no identifiers) for where to build
+  next; the contract is in [docs/voting-api.md](docs/voting-api.md).
 
 ## Build
 
@@ -33,6 +39,10 @@ flutter build apk      # release APK
 flutter build appbundle
 ```
 
+For iOS you also need a full Xcode installation. The sing-box core framework
+is a build artifact, not committed; build it once with
+`scripts/build-libbox-ios.sh` (requires Go 1.23+), then `flutter build ios`.
+
 The launcher icons are generated from `assets/icon/` with:
 
 ```sh
@@ -41,9 +51,10 @@ dart run flutter_launcher_icons
 
 ### Project layout
 
-- `lib/core/` parsing, sing-box config generation, profile storage, IP and
-  ping helpers.
-- `lib/ui/` the screens (home, servers, import, QR scan) and the theme.
+- `lib/core/` parsing, sing-box config generation, profile storage, voting,
+  IP and ping helpers.
+- `lib/ui/redesign/` the screens (home with the world map, locations, import
+  and QR scan, onboarding, settings) and the shared widget kit.
 - `lib/vpn_controller.dart` the Dart side of the `MethodChannel`.
 - `android/.../HideipVpnService.kt` the `VpnService` and foreground notification.
 - `android/.../MainActivity.kt` the native bridge: VPN consent and the
