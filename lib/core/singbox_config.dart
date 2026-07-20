@@ -1,22 +1,33 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'proxy_profile.dart';
 
 /// Assembles a full sing-box (1.13.x) config JSON from a [ProxyProfile].
 ///
-/// The TUN inbound mirrors the proven Blok 2 test config (stack "system",
-/// MTU 1500, auto_route, auto_detect_interface). The chosen profile becomes
-/// the "proxy" outbound and route.final points to it; a direct + dns outbound
-/// remain so DNS and bypass traffic still work.
+/// The TUN inbound mirrors the proven Blok 2 test config (MTU 1280, auto_route,
+/// auto_detect_interface). The chosen profile becomes the "proxy" outbound and
+/// route.final points to it; a direct + dns outbound remain so DNS and bypass
+/// traffic still work.
+///
+/// The TUN stack is platform-specific. Android hands the core the real tun file
+/// descriptor, so the "system" stack reads and writes it directly. iOS
+/// NEPacketTunnelProvider does not expose the descriptor that way; the core has
+/// to move packets through the packetFlow object, which only the "gvisor" stack
+/// does. Picking "system" on iOS brings the tunnel up but no packet ever flows,
+/// so the exit IP never changes.
 class SingboxConfig {
   static const String proxyTag = 'proxy';
 
   /// Build the config for a single selected [profile]. [logLevel] is "info"
-  /// during development; switch to "warn" for release builds.
+  /// during development; switch to "warn" for release builds. [tunStack] lets
+  /// tests pin the stack; it defaults to the right one for the platform.
   static Map<String, dynamic> build(
     ProxyProfile profile, {
     String logLevel = 'warn',
+    String? tunStack,
   }) {
+    final stack = tunStack ?? (Platform.isIOS ? 'gvisor' : 'system');
     return {
       'log': {'level': logLevel, 'timestamp': true},
       'dns': {
@@ -44,7 +55,7 @@ class SingboxConfig {
           'mtu': 1280,
           'auto_route': true,
           'strict_route': false,
-          'stack': 'system',
+          'stack': stack,
         },
       ],
       'outbounds': [
@@ -65,6 +76,7 @@ class SingboxConfig {
   }
 
   /// Convenience: build + encode to the JSON string VpnController.start expects.
-  static String buildJson(ProxyProfile profile, {String logLevel = 'warn'}) =>
-      jsonEncode(build(profile, logLevel: logLevel));
+  static String buildJson(ProxyProfile profile,
+          {String logLevel = 'warn', String? tunStack}) =>
+      jsonEncode(build(profile, logLevel: logLevel, tunStack: tunStack));
 }

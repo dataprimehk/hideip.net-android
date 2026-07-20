@@ -411,13 +411,20 @@ private class PlatformBridge: NSObject, LibboxPlatformInterfaceProtocol,
             defer { cursor = entry.ifa_next }
             let name = String(cString: entry.ifa_name)
             if byName[name] == nil {
+                // Translate Darwin's IFF_* bits to Go's net.Flags bit layout.
+                // These are NOT the same numbers: Darwin IFF_LOOPBACK is 0x8,
+                // IFF_POINTOPOINT 0x10, IFF_MULTICAST 0x8000, whereas Go wants
+                // Up=1, Broadcast=2, Loopback=4, PointToPoint=8, Multicast=16.
+                // Feeding the raw Darwin bits (or Linux's values) makes the
+                // core misread every interface and auto-detect finds no route
+                // out, so nothing flows.
                 let raw = Int32(bitPattern: entry.ifa_flags)
                 var flags: Int32 = 0
-                if raw & IFF_UP != 0 { flags |= 1 }            // net.FlagUp
-                if raw & IFF_BROADCAST != 0 { flags |= 2 }     // net.FlagBroadcast
-                if raw & IFF_LOOPBACK != 0 { flags |= 4 }      // net.FlagLoopback
-                if raw & IFF_POINTOPOINT != 0 { flags |= 8 }   // net.FlagPointToPoint
-                if raw & IFF_MULTICAST != 0 { flags |= 16 }    // net.FlagMulticast
+                if raw & IFF_UP != 0 { flags |= 1 }
+                if raw & IFF_BROADCAST != 0 { flags |= 2 }
+                if raw & IFF_LOOPBACK != 0 { flags |= 4 }
+                if raw & IFF_POINTOPOINT != 0 { flags |= 8 }
+                if raw & IFF_MULTICAST != 0 { flags |= 16 }
                 byName[name] = (Int32(if_nametoindex(name)), flags, [])
                 order.append(name)
             }
