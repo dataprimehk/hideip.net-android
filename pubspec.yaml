@@ -56,13 +56,13 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
 
-# App launcher icon: hideip mark (three accent squares). Run:
-#   dart run flutter_launcher_icons
+# App launcher icon: "hide" over the IP block on the dark panel. Sources are
+# rendered by scripts/build-app-icons.sh (which also runs this generator).
 flutter_launcher_icons:
   android: true
   ios: true
   image_path: "assets/icon/app_icon.png"
-  adaptive_icon_background: "#1A66F0"   # electric blue fill; white squares pop on it
+  adaptive_icon_background: "#0B0E14"   # same dark as the hero panel (logo doc 01-F)
   adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
   adaptive_icon_monochrome: "assets/icon/app_icon_monochrome.png"   # Android 13 themed icon
   remove_alpha_ios: true

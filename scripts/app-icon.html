@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<!-- Launcher icon source. Rendered to PNG by scripts/build-app-icons.sh via
+     headless Chrome; pick a variant with ?v=full | fg | mono:
+       full - dark tile with the "hide over the IP block" stack, for iOS and
+              the legacy Android icon (square, room for both elements)
+       fg   - transparent foreground for the Android adaptive icon, from
+              the logo doc's 01-F spec: "hide" at 172px over the blue chip,
+              tuned so both read inside the ~61% mask circle.
+       mono - white alpha mask of the solo block for Android themed icons
+              (IP letters knocked out so the silhouette still reads)
+     Fonts load from the repo so the icon always matches the in-app wordmark. -->
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+@font-face{ font-family:"Onest"; src:url("../assets/fonts/Onest-Variable.ttf"); font-weight:100 900; }
+@font-face{ font-family:"JBMono"; src:url("../assets/fonts/JetBrainsMono-Bold.ttf"); font-weight:700; }
+html,body{ margin:0; width:1024px; height:1024px; background:transparent; }
+.tile{ width:1024px; height:1024px; display:grid; place-items:center; }
+.tile.full{ background:#0B0E14; }
+.stack{ display:flex; flex-direction:column; align-items:center; }
+.hide{ font-family:"Onest"; font-weight:700; color:#fff; line-height:1;
+  letter-spacing:-.03em; font-variant-ligatures:none; }
+.chip{ font-family:"JBMono"; font-weight:700; color:#fff; background:hsl(220 95% 55%);
+  line-height:1; letter-spacing:-.02em; border-radius:.22em; padding:.1em .17em .12em; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const v = new URLSearchParams(location.search).get('v') || 'full';
+const root = document.getElementById('root');
+if (v === 'fg') {
+  // Geometry from the design page "Logo Predlozi", section 01·F "Android
+  // adaptive" (form A character: dark ground, solid blue chip, no
+  // gradients or shadows), sized against the REAL mask circle: launchers
+  // mask the middle 72/108dp, i.e. r~341px on this canvas (the pipeline
+  // strips the generator's 16% inset, see build-app-icons.sh). "hide"
+  // 205px, chip 470x354 with its corners ~12px inside the mask edge, and
+  // "IP" at 272px so the letters keep clear padding to the chip border.
+  // The 514/515 x-offsets are the spec's optical centring, keep them.
+  root.innerHTML = `<div class="tile"><svg width="1024" height="1024" viewBox="0 0 1024 1024">
+      <text x="514" y="404" font-size="192"
+        style="font-family:'Onest';font-weight:700;letter-spacing:-5.76px"
+        text-anchor="middle" fill="#FFFFFF">hide</text>
+      <rect x="302" y="428" width="420" height="331" rx="60" fill="#1F68F9"></rect>
+      <text x="515" y="687" font-size="254"
+        style="font-family:'JBMono';font-weight:700;letter-spacing:-5.08px"
+        text-anchor="middle" fill="#FFFFFF">IP</text>
+    </svg></div>`;
+} else if (v === 'mono') {
+  // Themed icons render tiny and single-colour: the solo block with the
+  // IP letters knocked out, per the same 01·F spec (486x366 rx 66).
+  root.innerHTML = `<div class="tile"><svg width="1024" height="1024" viewBox="0 0 1024 1024">
+        <defs><mask id="knock">
+          <rect x="269" y="329" width="486" height="366" rx="66" fill="white"></rect>
+          <text x="515" y="622" font-size="300"
+            style="font-family:'JBMono';font-weight:700;letter-spacing:-6px"
+            text-anchor="middle" fill="black">IP</text>
+        </mask></defs>
+        <rect x="269" y="329" width="486" height="366" rx="66" fill="white" mask="url(#knock)"></rect>
+      </svg></div>`;
+} else {
+  // iOS/legacy square: the full stack, proportions from the logo doc's
+  // 150px icon ("hide" 29/150, chip 44/150, gap 10/150).
+  const hide = 198, chip = 300, gap = 68;
+  root.innerHTML = `
+  <div class="tile full">
+    <div class="stack" style="gap:${gap}px">
+      <span class="hide" style="font-size:${hide}px">hide</span>
+      <span class="chip" style="font-size:${chip}px">IP</span>
+    </div>
+  </div>`;
+}
+</script>
+</body>
+</html>
