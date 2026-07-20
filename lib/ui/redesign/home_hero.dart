@@ -124,22 +124,32 @@ class _HomeHeroScreenState extends State<HomeHeroScreen> {
       final chrome = _chromeH ?? (pad.top + pad.bottom + 470);
       // 14 = the map's top margin inside the hero panel.
       final mapH = (cons.maxHeight - chrome - 14).clamp(0.0, cons.maxHeight);
-      return Column(children: [
+      // In map mode the strip under the panel (where the CTA sits) darkens
+      // with the same timing as the map expand, so the screen reads as one
+      // dark surface instead of a light band under a wall of map.
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 650),
+        curve: const Cubic(.32, .72, 0, 1),
+        color: mapMode ? Hip.hero : Hip.surface,
+        child: Column(children: [
         // --- dark hero panel ------------------------------------------------
         ClipRRect(
           borderRadius: const BorderRadius.vertical(bottom: Radius.circular(32)),
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 500),
+            duration: const Duration(milliseconds: 700),
+            curve: Curves.easeOutCubic,
             width: double.infinity,
             decoration: BoxDecoration(
-              gradient: on
-                  ? const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFF0B1410), Color(0xFF0D2A1E)],
-                    )
-                  : null,
-              color: on ? null : Hip.hero,
+              // Both states are gradients so the implicit animation is a
+              // clean color wash; lerping a solid color against a gradient
+              // dips through transparency halfway and reads as a flash.
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: on
+                    ? const [Color(0xFF0B1410), Color(0xFF0D2A1E)]
+                    : [Hip.hero, Hip.hero],
+              ),
             ),
             child: Column(children: [
               Column(key: _heroKey, children: [
@@ -151,14 +161,35 @@ class _HomeHeroScreenState extends State<HomeHeroScreen> {
                 ),
                 HideipMark(state: _markState, unit: 32, darkSurface: true),
                 const SizedBox(height: 4),
-                Text(title,
-                    style: Hip.sans(700, 26,
-                        color: on ? Brand.hsl(152, 60, 60) : Colors.white,
-                        letterSpacing: -.65)),
+                // Status flips (Connecting… -> Connected) crossfade with a
+                // small rise instead of snapping between frames.
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 320),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, anim) => FadeTransition(
+                    opacity: anim,
+                    child: SlideTransition(
+                      position: Tween(
+                              begin: const Offset(0, .22), end: Offset.zero)
+                          .animate(anim),
+                      child: child,
+                    ),
+                  ),
+                  child: Text(title,
+                      key: ValueKey(title),
+                      style: Hip.sans(700, 26,
+                          color: on ? Brand.hsl(152, 60, 60) : Colors.white,
+                          letterSpacing: -.65)),
+                ),
                 const SizedBox(height: 5),
-                Text(sub,
-                    style: Hip.sans(400, 13.5,
-                        color: Colors.white.withValues(alpha: .55))),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 320),
+                  child: Text(sub,
+                      key: ValueKey(sub),
+                      style: Hip.sans(400, 13.5,
+                          color: Colors.white.withValues(alpha: .55))),
+                ),
                 const SizedBox(height: 18),
                 _IpLine(state: state, protectedNow: on),
                 const SizedBox(height: 16),
@@ -218,24 +249,42 @@ class _HomeHeroScreenState extends State<HomeHeroScreen> {
           key: _ctaKey,
           padding: EdgeInsets.fromLTRB(
               22, 14, 22, MediaQuery.paddingOf(context).bottom + 14),
-          child: on || _disconnecting
-              ? HipCta(
-                  _disconnecting ? 'Disconnecting…' : 'Disconnect',
-                  ghost: true,
-                  darkGhost: mapMode,
-                  onTap: _disconnecting ? null : _disconnect,
-                )
-              : HipCta(
-                  state.isBusy ? 'Connecting…' : 'Connect',
-                  connect: true,
-                  onTap: busy
-                      ? null
-                      : hasServers
-                          ? state.connect
-                          : () => nav.openImport(),
-                ),
+          // The two CTA variants (filled Connect / ghost Disconnect) swap
+          // with a short crossfade; a hard swap between such different
+          // buttons reads as a glitch.
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 260),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, anim) => FadeTransition(
+              opacity: anim,
+              child: ScaleTransition(
+                scale: Tween(begin: .98, end: 1.0).animate(anim),
+                child: child,
+              ),
+            ),
+            child: on || _disconnecting
+                ? HipCta(
+                    _disconnecting ? 'Disconnecting…' : 'Disconnect',
+                    key: const ValueKey('cta-off'),
+                    ghost: true,
+                    danger: true,
+                    darkGhost: mapMode,
+                    onTap: _disconnecting ? null : _disconnect,
+                  )
+                : HipCta(
+                    state.isBusy ? 'Connecting…' : 'Connect',
+                    key: const ValueKey('cta-on'),
+                    connect: true,
+                    onTap: busy
+                        ? null
+                        : hasServers
+                            ? state.connect
+                            : () => nav.openImport(),
+                  ),
+          ),
         ),
-      ]);
+      ]));
     });
   }
 }
@@ -349,8 +398,13 @@ class _HomeList extends StatelessWidget {
         final mb = pb is PingOk ? pb.ms : 1 << 30;
         return ma.compareTo(mb);
       });
-    final rows = sorted.take(3).toList();
     final fastest = sorted.first;
+    // The chosen server always leads the list, even when it is not among
+    // the fastest three; the rest keep the speed order.
+    final rows = <Location>[
+      if (!auto && active != null) active,
+      ...sorted.where((l) => auto || l.index != active?.index),
+    ].take(3).toList();
 
     String subtitleFor(Location l) {
       final ping = state.pingFor(l.profile);
@@ -369,6 +423,8 @@ class _HomeList extends StatelessWidget {
           leading: HipFlag(cc: '', child: Icon(Icons.bolt, size: 19, color: Hip.blueDeep)),
           title: 'Auto',
           subtitle: 'Fastest server, now ${fastest.city}',
+          selected: auto,
+          live: auto && on,
           trailing: auto ? Icon(Icons.check, size: 18, color: Hip.blue) : null,
           onTap: () => state.selectLocation(null),
         ),
@@ -379,6 +435,8 @@ class _HomeList extends StatelessWidget {
             titleBadge: l.provider != null ? HipBadge.blue(l.provider!) : null,
             subtitle: advanced ? '${l.protoLabel} · ${l.host}' : subtitleFor(l),
             subtitleMono: advanced,
+            selected: !auto && active?.index == l.index,
+            live: !auto && active?.index == l.index && on,
             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
               HipBars(level: state.levelFor(l.profile)),
               SizedBox(
@@ -416,7 +474,10 @@ class _IpLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final green = Brand.hsl(152, 60, 55);
     final red = Brand.hsl(4, 80, 64);
-    return Container(
+    final ip = state.publicIp ?? (state.ipLoading ? '…' : 'unknown');
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeOutCubic,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
       decoration: BoxDecoration(
         color: protectedNow
@@ -434,19 +495,35 @@ class _IpLine extends StatelessWidget {
             style: Hip.sans(550, 11.5,
                 color: Colors.white.withValues(alpha: .45))),
         const SizedBox(width: 10),
-        Text(
-          state.publicIp ?? (state.ipLoading ? '…' : 'unknown'),
-          style: Hip.mono(600, 14, color: Colors.white, letterSpacing: .3),
+        // The address swap (old exit -> new exit) crossfades so the pill
+        // does not stutter mid-connect while the lookup settles.
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 280),
+          child: Text(
+            ip,
+            key: ValueKey(ip),
+            style: Hip.mono(600, 14, color: Colors.white, letterSpacing: .3),
+          ),
         ),
         const SizedBox(width: 10),
-        if (protectedNow) ...[
-          Icon(Icons.shield_outlined, size: 12, color: green),
-          const SizedBox(width: 4),
-          Text('PROTECTED',
-              style: Hip.sans(700, 11, color: green, letterSpacing: .66)),
-        ] else
-          Text('EXPOSED',
-              style: Hip.sans(700, 11, color: red, letterSpacing: .66)),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 280),
+          child: protectedNow
+              ? Row(
+                  key: const ValueKey('protected'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.shield_outlined, size: 12, color: green),
+                    const SizedBox(width: 4),
+                    Text('PROTECTED',
+                        style:
+                            Hip.sans(700, 11, color: green, letterSpacing: .66)),
+                  ],
+                )
+              : Text('EXPOSED',
+                  key: const ValueKey('exposed'),
+                  style: Hip.sans(700, 11, color: red, letterSpacing: .66)),
+        ),
       ]),
     );
   }

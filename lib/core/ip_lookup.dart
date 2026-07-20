@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show InternetAddress;
 
 import 'package:http/http.dart' as http;
 
@@ -29,6 +30,30 @@ class IpLookup {
       if (res.statusCode != 200) return null;
       final ip = res.body.trim();
       return ip.isEmpty ? null : ip;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Country code for an imported server whose name reveals no location
+  /// (most bare-IP links), or null on any failure. The host is resolved
+  /// locally first so the geo service only ever sees an IP address, never
+  /// the user's server hostname.
+  static Future<String?> countryFor(String host) async {
+    try {
+      var ip = host;
+      if (InternetAddress.tryParse(host) == null) {
+        final addrs = await InternetAddress.lookup(host).timeout(_timeout);
+        if (addrs.isEmpty) return null;
+        ip = addrs.first.address;
+      }
+      final res =
+          await http.get(Uri.parse('https://ipwho.is/$ip')).timeout(_timeout);
+      if (res.statusCode != 200) return null;
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      if (data['success'] == false) return null;
+      final cc = data['country_code'];
+      return cc is String && cc.length == 2 ? cc : null;
     } catch (_) {
       return null;
     }

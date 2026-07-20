@@ -51,6 +51,7 @@ class ProfileStore {
         'port': p.port,
         'outbound': p.outbound,
         if (p.extraOutbounds.isNotEmpty) 'extraOutbounds': p.extraOutbounds,
+        if (p.cc != null) 'cc': p.cc,
       };
 
   static ProxyProfile _fromMap(Map<String, dynamic> m) => ProxyProfile(
@@ -64,5 +65,6 @@ class ProfileStore {
                 .map((e) => e.cast<String, dynamic>())
                 .toList() ??
             const [],
+        cc: m['cc'] as String?,
       );
 }

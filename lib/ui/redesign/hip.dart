@@ -137,9 +137,20 @@ class HipFlag extends StatelessWidget {
   final Widget? child; // overrides the code (e.g. the Auto zap icon)
   const HipFlag({super.key, required this.cc, this.small = false, this.child});
 
+  /// Two ASCII letters become the country's emoji flag (regional indicator
+  /// pair); anything else (Auto, "+", unknown) keeps the mono code badge.
+  static String? _emojiFlag(String cc) {
+    if (cc.length != 2) return null;
+    final up = cc.toUpperCase();
+    final a = up.codeUnitAt(0), b = up.codeUnitAt(1);
+    if (a < 0x41 || a > 0x5A || b < 0x41 || b > 0x5A) return null;
+    return String.fromCharCodes([0x1F1E6 + a - 0x41, 0x1F1E6 + b - 0x41]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = small ? 30.0 : 38.0;
+    final flag = child == null ? _emojiFlag(cc) : null;
     return Container(
       width: s,
       height: s,
@@ -149,9 +160,12 @@ class HipFlag extends StatelessWidget {
         borderRadius: BorderRadius.circular(small ? 9 : 12),
       ),
       child: child ??
-          Text(cc,
-              style: Hip.mono(700, small ? 11 : 13,
-                  color: Hip.blueDeep, letterSpacing: .5)),
+          (flag != null
+              ? Text(flag,
+                  style: TextStyle(fontSize: small ? 15 : 19, height: 1))
+              : Text(cc,
+                  style: Hip.mono(700, small ? 11 : 13,
+                      color: Hip.blueDeep, letterSpacing: .5))),
     );
   }
 }
@@ -315,6 +329,7 @@ class HipCta extends StatefulWidget {
   final bool ghost;
   final bool quiet;
   final bool darkGhost; // ghost on a dark (onboarding) surface
+  final bool danger; // red-tinted ghost, for disconnect-style actions
   final Widget? leading;
   const HipCta(this.label,
       {super.key,
@@ -323,6 +338,7 @@ class HipCta extends StatefulWidget {
       this.ghost = false,
       this.quiet = false,
       this.darkGhost = false,
+      this.danger = false,
       this.leading});
 
   @override
@@ -365,7 +381,11 @@ class _HipCtaState extends State<HipCta> with SingleTickerProviderStateMixin {
     if (widget.connect) {
       fg = Colors.white;
     } else if (widget.ghost) {
-      fg = widget.darkGhost ? Colors.white : Hip.ink;
+      // The danger tint reads on light and dark surfaces alike; the same red
+      // the IP pill uses for EXPOSED, so "stop protecting" wears its color.
+      fg = widget.danger
+          ? (widget.darkGhost ? Brand.hsl(4, 85, 70) : Brand.hsl(4, 68, 50))
+          : (widget.darkGhost ? Colors.white : Hip.ink);
     } else if (widget.quiet) {
       fg = widget.darkGhost ? Colors.white.withValues(alpha: .55) : Hip.muted;
     } else {
@@ -434,10 +454,16 @@ class _HipCtaState extends State<HipCta> with SingleTickerProviderStateMixin {
       );
     } else {
       Color bg;
+      BoxBorder? border;
       if (widget.ghost) {
-        bg = widget.darkGhost
-            ? Colors.white.withValues(alpha: .09)
-            : (Hip.dm ? Brand.hsl(222, 14, 16) : Hip.line2);
+        if (widget.danger) {
+          bg = Brand.hsl(4, 80, 60, widget.darkGhost ? .14 : .08);
+          border = Border.all(color: Brand.hsl(4, 80, 60, .35), width: 1.5);
+        } else {
+          bg = widget.darkGhost
+              ? Colors.white.withValues(alpha: .09)
+              : (Hip.dm ? Brand.hsl(222, 14, 16) : Hip.line2);
+        }
       } else if (widget.quiet) {
         bg = Colors.transparent;
       } else {
@@ -448,6 +474,7 @@ class _HipCtaState extends State<HipCta> with SingleTickerProviderStateMixin {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: bg,
+          border: border,
           borderRadius: BorderRadius.circular(16),
         ),
         child: label,
@@ -599,6 +626,8 @@ class HipListRow extends StatelessWidget {
   final bool subtitleMono;
   final Widget? trailing;
   final VoidCallback? onTap;
+  final bool selected; // the currently chosen server: soft blue field
+  final bool live; // selected AND the tunnel is up: green live dot
   const HipListRow({
     super.key,
     this.leading,
@@ -608,12 +637,23 @@ class HipListRow extends StatelessWidget {
     this.subtitleMono = false,
     this.trailing,
     this.onTap,
+    this.selected = false,
+    this.live = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final row = Padding(
+    final green = Brand.hsl(152, 60, 42);
+    final row = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: selected
+          ? BoxDecoration(
+              color: Hip.dm
+                  ? Brand.hsl(220, 60, 55, .12)
+                  : Brand.hsl(220, 95, 55, .07),
+              borderRadius: BorderRadius.circular(Hip.radius - 4),
+            )
+          : null,
       child: Row(children: [
         if (leading != null) ...[leading!, const SizedBox(width: 12)],
         Expanded(
@@ -625,6 +665,21 @@ class HipListRow extends StatelessWidget {
                     style: Hip.sans(650, 15.5,
                         color: Hip.ink, letterSpacing: -.15)),
               ),
+              if (live) ...[
+                const SizedBox(width: 7),
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: green,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                          color: green.withValues(alpha: .35), spreadRadius: 2.5),
+                    ],
+                  ),
+                ),
+              ],
               if (titleBadge != null) ...[
                 const SizedBox(width: 7),
                 titleBadge!,

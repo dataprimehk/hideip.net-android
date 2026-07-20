@@ -16,6 +16,10 @@ class ProxyProfile {
   /// already carry their own "tag" and are added to the config as-is.
   final List<Map<String, dynamic>> extraOutbounds;
 
+  /// Country code geolocated from [server] when the name reveals no location
+  /// (most bare-IP links). Null until (and unless) that lookup succeeds.
+  final String? cc;
+
   const ProxyProfile({
     required this.name,
     required this.protocol,
@@ -23,7 +27,18 @@ class ProxyProfile {
     required this.port,
     required this.outbound,
     this.extraOutbounds = const [],
+    this.cc,
   });
+
+  ProxyProfile copyWith({String? cc}) => ProxyProfile(
+        name: name,
+        protocol: protocol,
+        server: server,
+        port: port,
+        outbound: outbound,
+        extraOutbounds: extraOutbounds,
+        cc: cc ?? this.cc,
+      );
 
   /// A copy of [outbound] with the given [tag] injected.
   Map<String, dynamic> taggedOutbound(String tag) => {

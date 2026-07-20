@@ -111,6 +111,7 @@ class AppState extends ChangeNotifier {
     refreshIp();
     // Latency probes power the Auto choice and the signal bars.
     pingAll();
+    _backfillGeo();
     // Reconcile with whatever the native service reports (e.g. after restart).
     // On a cold start we ignore a stale native error when nothing is running:
     // a leftover error from a previous session must not greet the user.
@@ -171,6 +172,7 @@ class AppState extends ChangeNotifier {
     if (_selected < 0) _selected = 0;
     await _persist();
     notifyListeners();
+    _backfillGeo();
   }
 
   /// Import a subscription body (base64 blob or newline links). Returns the
@@ -182,6 +184,7 @@ class AppState extends ChangeNotifier {
       if (_selected < 0) _selected = 0;
       await _persist();
       notifyListeners();
+      _backfillGeo();
     }
     return res;
   }
@@ -199,6 +202,28 @@ class AppState extends ChangeNotifier {
     await _persist();
     notifyListeners();
     pingAll();
+    _backfillGeo();
+  }
+
+  /// Fill in country codes for profiles whose name reveals no location by
+  /// geolocating the server address. Fire-and-forget: rows silently gain
+  /// their flag (and map pin) when an answer arrives, and profiles that
+  /// cannot be resolved right now are retried on the next app start.
+  Future<void> _backfillGeo() async {
+    for (final p in [..._profiles]) {
+      if (p.cc != null) continue;
+      final idx = _profiles.indexOf(p);
+      if (idx < 0) continue;
+      if (Location.derive(p, idx).cc != '··') continue;
+      final cc = await IpLookup.countryFor(p.server);
+      if (cc == null) continue;
+      // The list may have shifted while the lookup was in flight.
+      final at = _profiles.indexOf(p);
+      if (at < 0) continue;
+      _profiles[at] = p.copyWith(cc: cc);
+      await _persist();
+      notifyListeners();
+    }
   }
 
   /// Explicitly pick a server (turns Auto off), or pass null for Auto.
@@ -287,7 +312,7 @@ class AppState extends ChangeNotifier {
       _conn = ConnState.connected;
       Haptics.success();
       notifyListeners();
-      refreshIp();
+      _refreshIpAfterToggle();
     } on MissingPluginException {
       // No native VPN side on this platform yet (iOS before the PacketTunnel
       // port). Keep the rest of the app usable; only connecting is off-limits.
@@ -307,7 +332,21 @@ class AppState extends ChangeNotifier {
     _conn = ConnState.disconnected;
     _error = null;
     notifyListeners();
-    refreshIp();
+    _refreshIpAfterToggle();
+  }
+
+  /// Connect/disconnect flips the route table a moment AFTER the platform
+  /// call returns (on iOS the extension boots asynchronously), so a single
+  /// immediate lookup usually still travels the old path and shows the old
+  /// address. Poll until the address actually changes, then stop; give up
+  /// quietly after a few attempts so a flaky lookup can't spin forever.
+  Future<void> _refreshIpAfterToggle() async {
+    final before = _publicIp;
+    for (var attempt = 0; attempt < 6; attempt++) {
+      await refreshIp();
+      if (_publicIp != null && _publicIp != before) return;
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+    }
   }
 
   Future<void> refreshIp() async {

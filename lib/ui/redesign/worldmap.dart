@@ -499,7 +499,21 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
       _ensureEntrance();
 
       final (hudText, hudColor) = _hud();
-      return Stack(children: [
+      // Runs the same green wash as the hero panel above (same duration and
+      // curve), so panel, seam and ocean move as one surface on connect.
+      return TweenAnimationBuilder<double>(
+        tween: Tween(
+            begin: 0,
+            end: widget.conn == MarkState.connected ? 1.0 : 0.0),
+        duration: const Duration(milliseconds: 700),
+        curve: Curves.easeOutCubic,
+        builder: (context, connT, _) => _buildStack(hudText, hudColor, connT),
+      );
+    });
+  }
+
+  Widget _buildStack(String hudText, Color hudColor, double connT) {
+    return Stack(children: [
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
@@ -529,29 +543,39 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
                   selectedId: _voteSel?.id,
                   pulseId: _voteSel == null ? _pulseId : null,
                   t: _tick.value,
+                  connT: connT,
                 ),
               ),
             ),
           ),
         ),
-        // Soft vignette so the panel's dark chrome bleeds into the map.
+        // Soft vignette so the panel's dark chrome bleeds into the map. Its
+        // edges follow the connected wash so the blend matches whatever the
+        // panel above currently shows.
         IgnorePointer(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Hip.dark,
-                  Hip.dark.withValues(alpha: 0),
-                  Hip.dark.withValues(alpha: 0),
-                  Brand.hsl(222, 30, 5, .5),
-                ],
-                stops: const [0, .15, .84, 1],
+          child: Builder(builder: (context) {
+            final top = Color.lerp(Hip.dark, const Color(0xFF0B1D15), connT)!;
+            final bottom = Color.lerp(
+                Brand.hsl(222, 30, 5, .5),
+                const Color(0xFF08150F).withValues(alpha: .5),
+                connT)!;
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    top,
+                    top.withValues(alpha: 0),
+                    top.withValues(alpha: 0),
+                    bottom,
+                  ],
+                  stops: const [0, .15, .84, 1],
+                ),
               ),
-            ),
-            child: const SizedBox.expand(),
-          ),
+              child: const SizedBox.expand(),
+            );
+          }),
         ),
         if (_geo == null)
           Center(
@@ -665,7 +689,6 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
           ),
         ),
       ]);
-    });
   }
 }
 
@@ -684,6 +707,7 @@ class _MapPainter extends CustomPainter {
   final String? selectedId; // country picked for voting
   final String? pulseId; // country glowing this ambient cycle (invite pulse)
   final double t; // 0..1 ambient loop (4s)
+  final double connT; // 0..1 connected wash, in step with the hero panel
 
   _MapPainter({
     required this.geo,
@@ -700,15 +724,22 @@ class _MapPainter extends CustomPainter {
     required this.selectedId,
     required this.pulseId,
     required this.t,
+    required this.connT,
   });
 
-  static final _bg = Paint()..color = Brand.hsl(222, 32, 4.5);
+  // Ocean base and its connected-state counterpart. While the tunnel is up
+  // the hero panel behind the map washes green; tinting the ocean the same
+  // way keeps the panel and the map reading as one surface instead of a
+  // green band sitting on a black rectangle.
+  static final _bgBase = Brand.hsl(222, 32, 4.5);
+  static const _bgOn = Color(0xFF071510);
 
   @override
   void paint(Canvas canvas, Size size) {
     // The camera projects far beyond the widget; never paint outside it.
     canvas.clipRect(Offset.zero & size);
-    canvas.drawRect(Offset.zero & size, _bg);
+    canvas.drawRect(Offset.zero & size,
+        Paint()..color = Color.lerp(_bgBase, _bgOn, connT)!);
     final z = view.z, iz = 1 / z;
     canvas.save();
     canvas.translate(size.width / 2, size.height / 2);

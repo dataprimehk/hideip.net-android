@@ -105,8 +105,27 @@ class Location {
         lon: c?.$2,
       );
     }
-    // Nothing recognized: show a cleaned-up raw name, no flag guess.
     final display = raw.isEmpty ? '${p.server}:${p.port}' : raw;
+
+    // A country geolocated from the server address (stored on the profile at
+    // import) fills in when the name says nothing: the user's label stays,
+    // the country supplies the flag and the map pin.
+    final geoCc = p.cc?.toLowerCase();
+    if (geoCc != null && RegExp(r'^[a-z]{2}$').hasMatch(geoCc)) {
+      final c = _countryCenters[geoCc];
+      return Location(
+        profile: p,
+        index: index,
+        city: display,
+        country: _countries[geoCc] ?? geoCc.toUpperCase(),
+        cc: geoCc.toUpperCase(),
+        provider: provider,
+        lat: c?.$1,
+        lon: c?.$2,
+      );
+    }
+
+    // Nothing recognized: show a cleaned-up raw name, no flag guess.
     return Location(
       profile: p,
       index: index,
