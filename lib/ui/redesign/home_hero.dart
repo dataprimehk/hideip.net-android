@@ -70,6 +70,63 @@ class _HomeHeroScreenState extends State<HomeHeroScreen> {
     await Future.delayed(const Duration(milliseconds: 850));
     await widget.state.disconnect();
     if (mounted) setState(() => _disconnecting = false);
+    _maybeWarnAlwaysOn();
+  }
+
+  /// With Android's system Always-on VPN enabled but our in-app Always-on
+  /// opt-in off, the OS can keep holding traffic after a disconnect (the
+  /// service refuses the system's restart). The user has to resolve that in
+  /// system settings, so say it plainly and take them there.
+  void _maybeWarnAlwaysOn() {
+    final state = widget.state;
+    if (!mounted || !state.systemAlwaysOn || state.prefs.alwaysOn) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Hip.card,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(Hip.radius)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Always-on VPN is still active',
+                  style: Hip.sans(650, 17, color: Hip.ink)),
+              const SizedBox(height: 10),
+              Text(
+                'Android\'s Always-on VPN is enabled for hideip.net, so the '
+                'system may keep blocking traffic while you are disconnected. '
+                'Turn it off in Android settings, or enable Always-on VPN in '
+                'app Settings to reconnect automatically.',
+                style: Hip.sans(550, 14, color: Hip.inkSoft, height: 1.45),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: Text('Dismiss',
+                        style: Hip.sans(650, 14, color: Hip.muted)),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      VpnController.openVpnSettings();
+                    },
+                    child: Text('Open Android settings',
+                        style: Hip.sans(650, 14, color: Hip.blue)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _selectFromMap(Location loc) async {

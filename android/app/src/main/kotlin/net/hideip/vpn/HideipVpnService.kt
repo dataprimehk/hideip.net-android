@@ -59,10 +59,25 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         const val EXTRA_CONFIG = "config"
         const val EXTRA_LABEL = "label"
 
+        // Native prefs shared with MainActivity: whether the user opted into
+        // Always-on support in the app's own settings. The system's Always-on
+        // toggle lives in Android settings and is out of our control; this flag
+        // decides how we respond when the system starts us because of it.
+        const val NATIVE_PREFS = "hideip_native"
+        const val KEY_ALWAYS_ON = "always_on_enabled"
+        private const val LAST_CONFIG_FILE = "last_config.json"
+        private const val LAST_LABEL_FILE = "last_label.txt"
+
         /** Updated so Flutter can poll/observe status. */
         @Volatile var running: Boolean = false
             private set
         @Volatile var lastError: String? = null
+            private set
+
+        /** Whether Android's system Always-on VPN is enabled for this app, as
+         *  last observed by the service. The UI uses it to warn the user that a
+         *  disconnect may leave the system holding traffic. */
+        @Volatile var alwaysOnActive: Boolean = false
             private set
 
         // Live traffic counters, fed by the sing-box status CommandClient. Rates
@@ -101,21 +116,65 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
                 stopTunnel(startId)
                 return START_NOT_STICKY
             }
-            else -> {
-                val config = intent?.getStringExtra(EXTRA_CONFIG)
+            ACTION_START -> {
+                val config = intent.getStringExtra(EXTRA_CONFIG)
                 if (config.isNullOrBlank()) {
                     lastError = "Empty config"
-                    stopSelf()
+                    stopSelf(startId)
                     return START_NOT_STICKY
                 }
                 val label = intent.getStringExtra(EXTRA_LABEL)
+                persistLastConfig(config, label)
                 startTunnel(config, label)
+            }
+            else -> {
+                // System-initiated start: Android's Always-on VPN restarts the
+                // service with SERVICE_INTERFACE (or a null intent). Reconnect
+                // with the last used config ONLY when the user opted into
+                // Always-on inside the app's settings; otherwise bow out
+                // immediately so we never hold traffic the user didn't ask us
+                // to hold.
+                val allowed = getSharedPreferences(NATIVE_PREFS, MODE_PRIVATE)
+                    .getBoolean(KEY_ALWAYS_ON, false)
+                val saved = if (allowed) readLastConfig() else null
+                if (saved != null) {
+                    Log.i(TAG, "always-on start: reconnecting last profile")
+                    startTunnel(saved.first, saved.second)
+                } else {
+                    Log.i(TAG, "always-on start refused (not enabled in app settings)")
+                    stopSelf(startId)
+                }
             }
         }
         // NOT_STICKY: a VPN must never silently auto-restart after being killed,
         // and a sticky redelivery would also keep the service "started" so that
         // stopSelf() couldn't fully tear it down (leaving tun0 + the VPN key up).
         return START_NOT_STICKY
+    }
+
+    /** Keep the last config around for system-initiated (Always-on) starts,
+     *  when there is no Flutter side to hand us one. App-private storage. */
+    private fun persistLastConfig(config: String, label: String?) {
+        try {
+            java.io.File(filesDir, LAST_CONFIG_FILE).writeText(config)
+            java.io.File(filesDir, LAST_LABEL_FILE).writeText(label ?: "")
+        } catch (e: Exception) {
+            Log.w(TAG, "persistLastConfig: ${e.message}")
+        }
+    }
+
+    private fun readLastConfig(): Pair<String, String?>? {
+        return try {
+            val config = java.io.File(filesDir, LAST_CONFIG_FILE)
+                .takeIf { it.exists() }?.readText()
+            if (config.isNullOrBlank()) return null
+            val label = java.io.File(filesDir, LAST_LABEL_FILE)
+                .takeIf { it.exists() }?.readText()?.ifBlank { null }
+            config to label
+        } catch (e: Exception) {
+            Log.w(TAG, "readLastConfig: ${e.message}")
+            null
+        }
     }
 
     private fun ensureSetup() {
@@ -151,7 +210,10 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
             lastError = null
             running = true
-            Log.i(TAG, "sing-box tunnel started")
+            // Snapshot the system Always-on state while we can (instance method,
+            // API 29+); the UI reads it to warn about disconnect-while-always-on.
+            alwaysOnActive = Build.VERSION.SDK_INT >= 29 && isAlwaysOn
+            Log.i(TAG, "sing-box tunnel started (alwaysOn=$alwaysOnActive)")
         } catch (e: Exception) {
             lastError = e.message ?: e.toString()
             Log.e(TAG, "startTunnel failed", e)

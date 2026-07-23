@@ -9,6 +9,7 @@ class UiPrefs {
   static const _kAutoSelect = 'ui_autoselect_v1';
   static const _kDarkMode = 'ui_darkmode_v1';
   static const _kHomeMap = 'ui_homemap_v1';
+  static const _kAlwaysOn = 'ui_alwayson_v1';
 
   final bool advanced;
   final bool onboarded;
@@ -16,6 +17,9 @@ class UiPrefs {
   final bool autoSelect;
   final bool darkMode;
   final bool homeMap; // home shows the map view instead of the server list
+  // Opt-in for Android's Always-on VPN: when true the native service may
+  // reconnect the last server on a system-initiated start.
+  final bool alwaysOn;
 
   const UiPrefs({
     this.advanced = false,
@@ -24,6 +28,7 @@ class UiPrefs {
     this.autoSelect = true,
     this.darkMode = false,
     this.homeMap = false,
+    this.alwaysOn = false,
   });
 
   UiPrefs copyWith({
@@ -33,6 +38,7 @@ class UiPrefs {
     bool? autoSelect,
     bool? darkMode,
     bool? homeMap,
+    bool? alwaysOn,
   }) =>
       UiPrefs(
         advanced: advanced ?? this.advanced,
@@ -41,6 +47,7 @@ class UiPrefs {
         autoSelect: autoSelect ?? this.autoSelect,
         darkMode: darkMode ?? this.darkMode,
         homeMap: homeMap ?? this.homeMap,
+        alwaysOn: alwaysOn ?? this.alwaysOn,
       );
 
   static Future<UiPrefs> load() async {
@@ -52,6 +59,7 @@ class UiPrefs {
       autoSelect: p.getBool(_kAutoSelect) ?? true,
       darkMode: p.getBool(_kDarkMode) ?? false,
       homeMap: p.getBool(_kHomeMap) ?? false,
+      alwaysOn: p.getBool(_kAlwaysOn) ?? false,
     );
   }
 
@@ -63,5 +71,6 @@ class UiPrefs {
     await p.setBool(_kAutoSelect, autoSelect);
     await p.setBool(_kDarkMode, darkMode);
     await p.setBool(_kHomeMap, homeMap);
+    await p.setBool(_kAlwaysOn, alwaysOn);
   }
 }

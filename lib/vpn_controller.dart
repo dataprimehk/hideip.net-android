@@ -37,7 +37,35 @@ class VpnController {
     return VpnStatus(
       running: res?['running'] as bool? ?? false,
       error: res?['error'] as String?,
+      alwaysOn: res?['alwaysOn'] as bool? ?? false,
+      lockdown: res?['lockdown'] as bool? ?? false,
     );
+  }
+
+  /// Records the user's in-app choice for Always-on support. When enabled, the
+  /// native service reconnects the last used server if Android's Always-on VPN
+  /// starts it; when disabled it refuses system-initiated starts. Android only;
+  /// a no-op elsewhere.
+  static Future<void> setAlwaysOn(bool enabled) async {
+    try {
+      await _channel.invokeMethod('setAlwaysOn', {'enabled': enabled});
+    } on MissingPluginException {
+      // No native side (or not Android): nothing to record.
+    } on PlatformException {
+      // iOS side has no such method; ignore.
+    }
+  }
+
+  /// Opens the system VPN settings screen (where Android's Always-on VPN
+  /// toggle lives). Android only; a no-op elsewhere.
+  static Future<void> openVpnSettings() async {
+    try {
+      await _channel.invokeMethod('openVpnSettings');
+    } on MissingPluginException {
+      // ignore
+    } on PlatformException {
+      // ignore
+    }
   }
 
   /// Polls live traffic counters. Rates are bytes/second, totals cumulative
@@ -62,7 +90,18 @@ class VpnController {
 class VpnStatus {
   final bool running;
   final String? error;
-  const VpnStatus({required this.running, this.error});
+
+  /// Whether Android's system Always-on VPN is enabled for this app (read
+  /// live from system settings). Always false on other platforms.
+  final bool alwaysOn;
+
+  /// Whether "Block connections without VPN" (lockdown) accompanies it.
+  final bool lockdown;
+  const VpnStatus(
+      {required this.running,
+      this.error,
+      this.alwaysOn = false,
+      this.lockdown = false});
 }
 
 class VpnStats {

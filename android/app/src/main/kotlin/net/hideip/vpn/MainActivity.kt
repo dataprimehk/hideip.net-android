@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -61,9 +62,29 @@ class MainActivity : FlutterActivity() {
                         result.success(
                             mapOf(
                                 "running" to HideipVpnService.running,
-                                "error" to HideipVpnService.lastError
+                                "error" to HideipVpnService.lastError,
+                                "alwaysOn" to isSystemAlwaysOn(),
+                                "lockdown" to isLockdownEnabled()
                             )
                         )
+                    }
+                    "setAlwaysOn" -> {
+                        // The app-settings opt-in for Always-on support; the
+                        // service reads it when the system starts it directly.
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        getSharedPreferences(HideipVpnService.NATIVE_PREFS, MODE_PRIVATE)
+                            .edit()
+                            .putBoolean(HideipVpnService.KEY_ALWAYS_ON, enabled)
+                            .apply()
+                        result.success(true)
+                    }
+                    "openVpnSettings" -> {
+                        try {
+                            startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
                     }
                     "stats" -> {
                         result.success(
@@ -78,6 +99,23 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /** Whether Android's system Always-on VPN points at this app. Normal apps
+     *  cannot WRITE this (device-owner API only), but the secure setting is
+     *  readable, which lets the UI mirror the true system state live. Falls
+     *  back to the service's last snapshot if the read is ever restricted. */
+    private fun isSystemAlwaysOn(): Boolean = try {
+        Settings.Secure.getString(contentResolver, "always_on_vpn_app") == packageName
+    } catch (e: Exception) {
+        HideipVpnService.alwaysOnActive
+    }
+
+    /** Whether "Block connections without VPN" accompanies Always-on. */
+    private fun isLockdownEnabled(): Boolean = try {
+        Settings.Secure.getInt(contentResolver, "always_on_vpn_lockdown", 0) == 1
+    } catch (e: Exception) {
+        false
     }
 
     private fun handlePrepare(result: MethodChannel.Result) {
