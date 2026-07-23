@@ -20,6 +20,12 @@ class ProxyProfile {
   /// (most bare-IP links). Null until (and unless) that lookup succeeds.
   final String? cc;
 
+  /// True for profiles managed by the hideip.net premium subscription (they
+  /// came from the provisioning backend, not a user import). Managed profiles
+  /// are replaced wholesale on refresh and removed when the subscription
+  /// lapses; user imports are never touched.
+  final bool premium;
+
   const ProxyProfile({
     required this.name,
     required this.protocol,
@@ -28,9 +34,10 @@ class ProxyProfile {
     required this.outbound,
     this.extraOutbounds = const [],
     this.cc,
+    this.premium = false,
   });
 
-  ProxyProfile copyWith({String? cc}) => ProxyProfile(
+  ProxyProfile copyWith({String? cc, bool? premium}) => ProxyProfile(
         name: name,
         protocol: protocol,
         server: server,
@@ -38,6 +45,7 @@ class ProxyProfile {
         outbound: outbound,
         extraOutbounds: extraOutbounds,
         cc: cc ?? this.cc,
+        premium: premium ?? this.premium,
       );
 
   /// A copy of [outbound] with the given [tag] injected.

@@ -29,6 +29,39 @@ class LocationsScreen extends StatelessWidget {
     final advanced = state.prefs.advanced;
     final auto = state.prefs.autoSelect;
     final locations = state.locations;
+    final premiumLocs = locations.where((l) => l.premium).toList();
+    final userLocs = locations.where((l) => !l.premium).toList();
+    final hasSub = state.premium.isOn;
+
+    Widget serverRow(Location l) => HipListRow(
+          leading: HipFlag(cc: l.cc),
+          title: l.city,
+          titleBadge: l.premium
+              ? HipBadge.blue('hideip.net')
+              : (l.provider != null ? HipBadge.blue(l.provider!) : null),
+          subtitle: advanced ? '${l.protoLabel} · ${l.host}' : l.country,
+          subtitleMono: advanced,
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            HipBars(level: state.levelFor(l.profile)),
+            SizedBox(
+              width: 30,
+              child: !auto && state.selectedIndex == l.index
+                  ? Icon(Icons.check, size: 18, color: Hip.blue)
+                  : null,
+            ),
+            if (advanced)
+              GestureDetector(
+                onTap: () => nav.openDetail(l),
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child:
+                      Icon(Icons.chevron_right, size: 18, color: Hip.muted2),
+                ),
+              ),
+          ]),
+          onTap: () => _select(l),
+        );
 
     return SafeArea(
       bottom: false,
@@ -56,8 +89,45 @@ class LocationsScreen extends StatelessWidget {
                   onTap: () => _select(null),
                 ),
               ]),
+              const _PremiumSectionHead(),
+              if (hasSub && premiumLocs.isNotEmpty)
+                HipListGroup(children: [
+                  for (final l in premiumLocs) serverRow(l),
+                ])
+              else if (hasSub)
+                // Subscribed, but the profiles have not landed yet (first
+                // provision in flight, or offline): keep the place visible.
+                HipListGroup(children: [
+                  HipListRow(
+                    leading: HipFlag(
+                        cc: '',
+                        child: SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Hip.blueDeep),
+                        )),
+                    title: 'Setting up your servers',
+                    subtitle: 'Premium locations appear here shortly',
+                  ),
+                ])
+              else
+                HipListGroup(children: [
+                  HipListRow(
+                    leading: HipFlag(
+                        cc: '',
+                        child: Text('IP',
+                            style: Hip.mono(700, 13,
+                                color: Hip.blueDeep, letterSpacing: .5))),
+                    title: 'Premium servers',
+                    subtitle: 'Fast locations run by hideip.net',
+                    trailing:
+                        Icon(Icons.chevron_right, size: 18, color: Hip.muted2),
+                    onTap: () => nav.openPaywall(HipScreen.locations),
+                  ),
+                ]),
               const HipSectionLabel('Your servers'),
-              if (locations.isEmpty)
+              if (userLocs.isEmpty)
                 HipCard(
                   child: Text(
                     'No servers yet. Add a connection from your provider to get started.',
@@ -66,41 +136,11 @@ class LocationsScreen extends StatelessWidget {
                 )
               else
                 HipListGroup(children: [
-                  for (final l in locations)
-                    HipListRow(
-                      leading: HipFlag(cc: l.cc),
-                      title: l.city,
-                      titleBadge:
-                          l.provider != null ? HipBadge.blue(l.provider!) : null,
-                      subtitle: advanced
-                          ? '${l.protoLabel} · ${l.host}'
-                          : l.country,
-                      subtitleMono: advanced,
-                      trailing:
-                          Row(mainAxisSize: MainAxisSize.min, children: [
-                        HipBars(level: state.levelFor(l.profile)),
-                        SizedBox(
-                          width: 30,
-                          child: !auto && state.selectedIndex == l.index
-                              ? Icon(Icons.check, size: 18, color: Hip.blue)
-                              : null,
-                        ),
-                        if (advanced)
-                          GestureDetector(
-                            onTap: () => nav.openDetail(l),
-                            behavior: HitTestBehavior.opaque,
-                            child: Padding(
-                              padding: const EdgeInsets.all(4),
-                              child: Icon(Icons.chevron_right,
-                                  size: 18, color: Hip.muted2),
-                            ),
-                          ),
-                      ]),
-                      onTap: () => _select(l),
-                    ),
+                  for (final l in userLocs) serverRow(l),
                 ]),
-              const HipSubnote(
-                  'Names and flags are cleaned up automatically from whatever your provider sends.'),
+              if (userLocs.isNotEmpty)
+                const HipSubnote(
+                    'Names and flags are cleaned up automatically from whatever your provider sends.'),
               _VoteSection(onOpenMap: () {
                 final prefs = state.prefs;
                 if (!prefs.homeMap) {
@@ -122,6 +162,24 @@ class LocationsScreen extends StatelessWidget {
           ),
         ),
       ]),
+    );
+  }
+}
+
+/// Section header for the managed servers: the brand wordmark where the
+/// other sections carry an uppercase label, same metrics so the rhythm of
+/// the list holds on any screen width.
+class _PremiumSectionHead extends StatelessWidget {
+  const _PremiumSectionHead();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(14, 18, 14, 7),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: HipWordmark(size: 13.5),
+      ),
     );
   }
 }

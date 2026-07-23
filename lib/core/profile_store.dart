@@ -52,6 +52,7 @@ class ProfileStore {
         'outbound': p.outbound,
         if (p.extraOutbounds.isNotEmpty) 'extraOutbounds': p.extraOutbounds,
         if (p.cc != null) 'cc': p.cc,
+        if (p.premium) 'premium': true,
       };
 
   static ProxyProfile _fromMap(Map<String, dynamic> m) => ProxyProfile(
@@ -66,5 +67,9 @@ class ProfileStore {
                 .toList() ??
             const [],
         cc: m['cc'] as String?,
+        // Lists saved before the flag existed marked managed profiles only by
+        // the backend's old "hideip.net " name prefix; migrate them here.
+        premium: m['premium'] == true ||
+            (m['name'] as String? ?? '').startsWith('hideip.net '),
       );
 }

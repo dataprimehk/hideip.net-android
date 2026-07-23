@@ -26,6 +26,7 @@ class Location {
 
   String get rawName => profile.name;
   String get host => '${profile.server}:${profile.port}';
+  bool get premium => profile.premium;
 
   /// Short protocol label, e.g. "vless · reality" or "ss · shadowtls".
   String get protoLabel {

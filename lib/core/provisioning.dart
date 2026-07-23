@@ -13,11 +13,6 @@ import 'subscription.dart';
 class ProvisioningService {
   static const String endpoint = 'https://api.hideip.net:8444';
 
-  /// Name prefix that marks server profiles managed by the subscription, so
-  /// refreshes can replace them without touching the user's own imports.
-  /// The backend labels every premium profile `hideip.net <location>`.
-  static const String profilePrefix = 'hideip.net ';
-
   final http.Client _client;
   ProvisioningService({http.Client? client})
       : _client = client ?? http.Client();
@@ -52,7 +47,13 @@ class ProvisioningService {
           .timeout(const Duration(seconds: 20));
       if (resp.statusCode == 404 || resp.statusCode == 410) return const [];
       if (resp.statusCode != 200) return null;
-      return Subscription.parse(resp.body).profiles;
+      // Everything this URL serves is subscription-managed by definition;
+      // the flag (not the name) is what marks a profile as ours, so the
+      // backend is free to label servers by plain location.
+      return Subscription.parse(resp.body)
+          .profiles
+          .map((p) => p.copyWith(premium: true))
+          .toList();
     } catch (_) {
       return null;
     }
@@ -60,8 +61,7 @@ class ProvisioningService {
 }
 
 /// Replace the premium-managed profiles inside [current] with [fresh],
-/// leaving every user-imported profile untouched and in place. Premium
-/// profiles are recognized by name prefix.
+/// leaving every user-imported profile untouched and in place.
 List<ProxyProfile> mergePremiumProfiles(
     List<ProxyProfile> current, List<ProxyProfile> fresh) {
   final kept = current.where((p) => !isPremiumProfile(p)).toList();
@@ -69,8 +69,7 @@ List<ProxyProfile> mergePremiumProfiles(
 }
 
 /// Whether [p] is managed by the premium subscription (vs user-imported).
-bool isPremiumProfile(ProxyProfile p) =>
-    p.name.startsWith(ProvisioningService.profilePrefix);
+bool isPremiumProfile(ProxyProfile p) => p.premium;
 
 /// Persisted pointers for the premium subscription: the subscription URL the
 /// backend issued, and the latest signed transaction (kept so a provision

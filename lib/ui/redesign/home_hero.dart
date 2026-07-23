@@ -489,7 +489,9 @@ class _HomeList extends StatelessWidget {
           HipListRow(
             leading: HipFlag(cc: l.cc),
             title: l.city,
-            titleBadge: l.provider != null ? HipBadge.blue(l.provider!) : null,
+            titleBadge: l.premium
+                ? HipBadge.blue('hideip.net')
+                : (l.provider != null ? HipBadge.blue(l.provider!) : null),
             subtitle: advanced ? '${l.protoLabel} · ${l.host}' : subtitleFor(l),
             subtitleMono: advanced,
             selected: !auto && active?.index == l.index,
