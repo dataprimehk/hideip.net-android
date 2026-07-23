@@ -1,18 +1,37 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/haptics.dart';
 import '../../core/location.dart';
 import '../../core/ping.dart';
 import '../../core/premium.dart';
+import '../../core/purchase_service.dart';
 import '../../state/app_state.dart';
 import '../brand.dart';
 import 'hip.dart';
 import 'shell.dart';
 
+bool get _ios => defaultTargetPlatform == TargetPlatform.iOS;
+
 /// "App Store" / "Google Play" in purchase copy, per platform.
-String get _storeName =>
-    defaultTargetPlatform == TargetPlatform.iOS ? 'App Store' : 'Google Play';
+String get _storeName => _ios ? 'App Store' : 'Google Play';
+
+/// The store's own subscription-management page.
+String get _manageUrl => _ios
+    ? 'https://apps.apple.com/account/subscriptions'
+    : 'https://play.google.com/store/account/subscriptions';
+
+/// Apple requires a Terms of Use (EULA) link on the paywall; the standard
+/// Apple EULA is the one the App Store listing declares.
+String get _termsUrl => _ios
+    ? 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/'
+    : 'https://hideip.net/terms';
+
+const _privacyUrl = 'https://hideip.net/privacy';
+
+void _openUrl(String url) =>
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
 
 /// The brand cube outline used everywhere Premium is referenced. Proportions
 /// follow the prototype icon (a 15/24 rounded square at stroke 2).
@@ -92,14 +111,19 @@ class _PaywallScreenState extends State<PaywallScreen> {
       _busyMsg = 'Confirming with the $_storeName';
       _phase = _PwPhase.buying;
     });
-    final ok = await widget.state.purchasePremium(_plan);
+    final outcome = await widget.state.purchasePremium(_plan);
     if (!mounted) return;
-    if (ok) {
-      Haptics.success();
-    } else {
-      Haptics.error();
+    switch (outcome) {
+      case PurchaseOutcome.success:
+        Haptics.success();
+        setState(() => _phase = _PwPhase.success);
+      case PurchaseOutcome.canceled:
+        // Their choice, not a failure: back to the plans without a banner.
+        setState(() => _phase = _PwPhase.plans);
+      case PurchaseOutcome.failed:
+        Haptics.error();
+        setState(() => _phase = _PwPhase.error);
     }
-    setState(() => _phase = ok ? _PwPhase.success : _PwPhase.error);
   }
 
   Future<void> _restore() async {
@@ -121,7 +145,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Widget build(BuildContext context) {
     if (_phase == _PwPhase.success) return _success();
 
-    final info = PlanInfo.of(_plan);
+    final info = widget.state.planInfo(_plan);
     return Container(
       color: Hip.dark,
       child: SafeArea(
@@ -150,10 +174,12 @@ class _PaywallScreenState extends State<PaywallScreen> {
                           _plans(),
                           const Spacer(),
                           if (_phase == _PwPhase.error) _errorBanner(),
-                          _legal(
-                              '7 days free, then |${info.price}| per ${info.per}. '
-                              'Nothing is charged before |$_trialEnds|. '
-                              'Auto-renews; cancel anytime in your $_storeName settings.'),
+                          _legal(info.trial
+                              ? '7 days free, then |${info.price}| per ${info.per}. '
+                                  'Nothing is charged before |$_trialEnds|. '
+                                  'Auto-renews; cancel anytime in your $_storeName settings.'
+                              : '|${info.price}| per ${info.per}, charged today. '
+                                  'Auto-renews; cancel anytime in your $_storeName settings.'),
                           _links(),
                         ]),
                       ),
@@ -167,7 +193,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
               child: HipCta(
                   _phase == _PwPhase.error
                       ? 'Try again'
-                      : 'Start 7-day free trial',
+                      : info.trial
+                          ? 'Start 7-day free trial'
+                          : 'Subscribe now',
                   connect: true,
                   onTap: _buy),
             ),
@@ -295,7 +323,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
   Widget _plans() {
     Widget planRow(PremiumPlan plan, {Widget? nameBadge}) {
-      final info = PlanInfo.of(plan);
+      final info = widget.state.planInfo(plan);
       final on = _plan == plan;
       return GestureDetector(
         onTap: () {
@@ -387,6 +415,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   }
 
   Widget _errorBanner() {
+    final storeMsg = widget.state.purchases.lastError;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
@@ -402,7 +431,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
           child: Text(
               "That didn't go through, and you haven't been charged. "
               'Check your payment method, then try again; or restore an '
-              'earlier purchase.',
+              'earlier purchase.'
+              '${storeMsg != null && storeMsg.isNotEmpty ? '\n($storeMsg)' : ''}',
               style: Hip.sans(400, 12.5,
                   color: Brand.hsl(35, 90, 78), height: 1.5)),
         ),
@@ -442,17 +472,25 @@ class _PaywallScreenState extends State<PaywallScreen> {
             shape: BoxShape.circle,
           ),
         );
+    // FittedBox: the three links brush past narrow widths otherwise
+    // (a 38px overflow on a 402pt screen).
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 11, 0, 4),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        GestureDetector(
-            onTap: _restore, child: Text('Restore purchases', style: style)),
-        dot(),
-        // Web views for the legal pages arrive with the billing integration.
-        Text('Terms of Use', style: style),
-        dot(),
-        Text('Privacy Policy', style: style),
-      ]),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          GestureDetector(
+              onTap: _restore, child: Text('Restore purchases', style: style)),
+          dot(),
+          GestureDetector(
+              onTap: () => _openUrl(_termsUrl),
+              child: Text('Terms of Use', style: style)),
+          dot(),
+          GestureDetector(
+              onTap: () => _openUrl(_privacyUrl),
+              child: Text('Privacy Policy', style: style)),
+        ]),
+      ),
     );
   }
 
@@ -483,6 +521,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
   }
 
   Widget _success() {
+    final p = widget.state.premium;
+    final trial = p.status == PremiumStatus.trial;
+    final renewsDate =
+        p.renews != null ? formatPremiumDate(p.renews!) : _trialEnds;
     final locations = widget.state.locations.take(4).toList();
     return Container(
       color: Hip.dark,
@@ -509,8 +551,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
                         color: Colors.white, letterSpacing: -.64)),
                 const SizedBox(height: 6),
                 Text(
-                    'Your 7-day free trial is active. '
-                    'New locations just arrived:',
+                    '${trial ? 'Your 7-day free trial is active.' : 'Your subscription is active.'}'
+                    '${locations.isEmpty ? '' : ' Ready when you are:'}',
                     textAlign: TextAlign.center,
                     style: Hip.sans(400, 13,
                         color: Colors.white.withValues(alpha: .58),
@@ -518,8 +560,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 const SizedBox(height: 18),
                 for (final l in locations) _unlockRow(l),
                 const Spacer(),
-                _legal('First charge on |$_trialEnds| '
-                    'unless you cancel before then.'),
+                _legal(trial
+                    ? 'First charge on |$renewsDate| '
+                        'unless you cancel before then.'
+                    : 'Renews on |$renewsDate|; cancel anytime '
+                        'in your $_storeName settings.'),
                 const SizedBox(height: 8),
               ]),
             ),
@@ -579,7 +624,7 @@ class PremiumManageScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = state.premium;
-    final info = PlanInfo.of(p.plan ?? PremiumPlan.yearly);
+    final info = state.planInfo(p.plan ?? PremiumPlan.yearly);
     final expired = p.status == PremiumStatus.expired;
     final statusBadge = switch (p.status) {
       PremiumStatus.active => HipBadge.ok('Active'),
@@ -607,7 +652,7 @@ class PremiumManageScreen extends StatelessWidget {
                           const SizedBox(height: 2),
                           Text(
                               expired
-                                  ? 'Trial ended; not renewing'
+                                  ? 'Subscription ended; not renewing'
                                   : '${info.name} plan',
                               style: Hip.sans(550, 12, color: Hip.muted)),
                         ]),
@@ -646,9 +691,7 @@ class PremiumManageScreen extends StatelessWidget {
                   subtitle: 'Change plan, cancel, or update payment',
                   trailing:
                       Icon(Icons.open_in_new, size: 17, color: Hip.muted2),
-                  // The store's subscription page deep link ships with the
-                  // billing integration.
-                  onTap: null,
+                  onTap: () => _openUrl(_manageUrl),
                 ),
                 HipListRow(
                   title: 'Restore purchases',

@@ -9,7 +9,9 @@ import '../core/location.dart';
 import '../core/ping.dart';
 import '../core/premium.dart';
 import '../core/profile_store.dart';
+import '../core/provisioning.dart';
 import '../core/proxy_profile.dart';
+import '../core/purchase_service.dart';
 import '../core/share_link_parser.dart';
 import '../core/singbox_config.dart';
 import '../core/subscription.dart';
@@ -35,8 +37,9 @@ class AppState extends ChangeNotifier {
   final Map<String, PingResult> _pings = {};
   bool _pinging = false;
   UiPrefs _prefs = const UiPrefs();
-  // Becomes mutable once the store integration can change it.
-  final Premium _premium = const Premium.none();
+  final PurchaseService _purchases = PurchaseService();
+  final ProvisioningService _provisioning = ProvisioningService();
+  Premium _premium = const Premium.none();
   String? _toast;
   Timer? _toastTimer;
   bool _ready = false;
@@ -60,8 +63,25 @@ class AppState extends ChangeNotifier {
   bool get pinging => _pinging;
   PingResult? pingFor(ProxyProfile p) => _pings['${p.server}:${p.port}'];
   UiPrefs get prefs => _prefs;
-  Premium get premium => _premium;
+  /// The current entitlement with expiry applied at read time. The persisted
+  /// copy is only re-evaluated on launch, but a session can outlive the
+  /// period (long-running app, or a clock that was behind at load); the real
+  /// gate stays server-side receipt validation.
+  Premium get premium {
+    final r = _premium.renews;
+    if (_premium.isOn && r != null && r.isBefore(DateTime.now())) {
+      return Premium(
+          status: PremiumStatus.expired, plan: _premium.plan, renews: r);
+    }
+    return _premium;
+  }
   String? get toast => _toast;
+
+  /// Whether Android's system Always-on VPN is enabled for this app (as last
+  /// reported by the native service). With it on and [UiPrefs.alwaysOn] off,
+  /// a disconnect can leave the OS holding traffic; the UI warns about that.
+  bool get systemAlwaysOn => _systemAlwaysOn;
+  bool _systemAlwaysOn = false;
 
   /// True once [init] has loaded persisted state (gates the first frame).
   bool get ready => _ready;
@@ -103,9 +123,37 @@ class AppState extends ChangeNotifier {
   /// Load persisted state + initial IP. Call once at startup.
   Future<void> init() async {
     _prefs = await UiPrefs.load();
+    // Keep the native side's copy of the Always-on opt-in current (the service
+    // reads it on system-initiated starts, when no Dart is running).
+    VpnController.setAlwaysOn(_prefs.alwaysOn);
+    _premium = await Premium.load();
+    iapLog('[iap] loaded: ${_premium.status.name} plan=${_premium.plan?.name}'
+        ' renews=${_premium.renews} now=${DateTime.now()}');
+    // The store is the source of truth: every entitlement it reports (a
+    // purchase, a restore, a renewal from a previous session) lands here.
+    _purchases.init(onPremium: (p, jws) {
+      // The store replays past transactions in arbitrary order (a stale
+      // renewal can land right after the newest one); an entitlement only
+      // ever moves forward. Plan changes are safe under this rule: in a
+      // subscription group the replacing transaction always starts at or
+      // after the old one's period end.
+      final held = _premium.renews;
+      if (held != null && p.renews != null && p.renews!.isBefore(held)) {
+        return;
+      }
+      _premium = p;
+      notifyListeners();
+      p.save();
+      // Every live entitlement re-provisions: a first purchase creates the
+      // server profile, a renewal extends its lifetime server-side.
+      if (p.isOn && jws != null) _provisionPremium(jws);
+    });
     _profiles.addAll(await ProfileStore.load());
     final savedIdx = await ProfileStore.loadSelectedIndex();
     if (savedIdx >= 0 && savedIdx < _profiles.length) _selected = savedIdx;
+    // Keep the premium server profiles current (or drop them once the
+    // subscription lapsed); fire-and-forget, list updates when it lands.
+    _refreshPremiumProfiles();
     _ready = true;
     notifyListeners();
     refreshIp();
@@ -123,26 +171,93 @@ class AppState extends ChangeNotifier {
 
   // --- Premium -----------------------------------------------------------
 
-  /// Buy the Premium subscription. Returns true when the purchase (and the
-  /// server provisioning that follows it) succeeded. The store integration
-  /// lands together with kPlansAvailable; until then this reports failure so
-  /// the paywall's error state is the worst that can happen if the screen is
-  /// ever reached early.
-  Future<bool> purchasePremium(PremiumPlan plan) async => false;
+  /// The store bridge, exposed for the paywall (live prices, availability,
+  /// the store's message for a failed purchase).
+  PurchaseService get purchases => _purchases;
+
+  /// [PlanInfo] for [plan] with the store's localized price once the catalog
+  /// has loaded; before that the USD fallback.
+  PlanInfo planInfo(PremiumPlan plan) {
+    final price = _purchases.priceOf(plan);
+    final base = PlanInfo.of(plan);
+    return price == null ? base : base.withPrice(price);
+  }
+
+  /// Buy the Premium subscription. The entitlement itself lands through the
+  /// purchase stream (see [init]); this reports how the attempt ended.
+  Future<PurchaseOutcome> purchasePremium(PremiumPlan plan) =>
+      _purchases.buy(plan);
 
   /// Re-check the store for an existing subscription.
   Future<void> restorePurchases() async {
-    showToast(_premium.status == PremiumStatus.none
-        ? 'No purchases to restore'
-        : 'Purchases restored');
+    final restored = await _purchases.restore();
+    showToast(restored ? 'Purchases restored' : 'No purchases to restore');
+  }
+
+  /// Exchange the signed transaction for tunnel credentials and pull the
+  /// premium profiles in. Every step is retried on the next launch (or the
+  /// next store event) if it fails here, so errors stay silent.
+  Future<void> _provisionPremium(String jws) async {
+    await PremiumSub.saveJws(jws);
+    final url = await _provisioning.provision(jws);
+    if (url == null) return;
+    await PremiumSub.saveUrl(url);
+    final fresh = await _provisioning.fetchProfiles(url);
+    if (fresh != null && fresh.isNotEmpty) {
+      _applyPremiumProfiles(fresh);
+      iapLog('[iap] provisioned: ${fresh.length} profile(s)');
+    }
+  }
+
+  /// On launch: re-fetch premium profiles while the subscription lives (the
+  /// server may rotate keys or add locations), retry a provision that never
+  /// completed, and clear the managed profiles once the subscription lapsed.
+  Future<void> _refreshPremiumProfiles() async {
+    if (!premium.isOn) {
+      if (premium.status == PremiumStatus.expired &&
+          _profiles.any(isPremiumProfile)) {
+        _applyPremiumProfiles(const []);
+        await PremiumSub.clear();
+        iapLog('[iap] premium lapsed: managed profiles removed');
+      }
+      return;
+    }
+    final url = await PremiumSub.url();
+    if (url == null) {
+      final jws = await PremiumSub.jws();
+      if (jws != null) await _provisionPremium(jws);
+      return;
+    }
+    final fresh = await _provisioning.fetchProfiles(url);
+    if (fresh == null) return; // transient failure: keep what we have
+    if (fresh.isEmpty && !_profiles.any(isPremiumProfile)) return;
+    _applyPremiumProfiles(fresh);
+  }
+
+  /// Swap the managed premium profiles for [fresh], preserving the user's
+  /// own profiles and, when possible, the current selection.
+  void _applyPremiumProfiles(List<ProxyProfile> fresh) {
+    final sel = selected;
+    final merged = mergePremiumProfiles(_profiles, fresh);
+    _profiles
+      ..clear()
+      ..addAll(merged);
+    _selected = sel == null ? -1 : _profiles.indexOf(sel);
+    if (_selected < 0 && _profiles.isNotEmpty) _selected = 0;
+    _persist();
+    notifyListeners();
+    pingAll();
+    _backfillGeo();
   }
 
   // --- UI preferences / toast --------------------------------------------
 
   Future<void> updatePrefs(UiPrefs next) async {
+    final alwaysOnChanged = next.alwaysOn != _prefs.alwaysOn;
     _prefs = next;
     notifyListeners();
     await next.save();
+    if (alwaysOnChanged) await VpnController.setAlwaysOn(next.alwaysOn);
   }
 
   void showToast(String message) {
@@ -159,6 +274,7 @@ class AppState extends ChangeNotifier {
   void dispose() {
     _statusPoll?.cancel();
     _toastTimer?.cancel();
+    _purchases.dispose();
     super.dispose();
   }
 
@@ -374,6 +490,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> _syncStatus({bool initial = false}) async {
     final s = await VpnController.status();
+    if (s.alwaysOn != _systemAlwaysOn) {
+      _systemAlwaysOn = s.alwaysOn;
+      notifyListeners();
+    }
     if (s.error != null && s.error!.isNotEmpty) {
       // On the initial cold-start reconcile, a native error while nothing is
       // running is stale (left over from a previous session); discard it.

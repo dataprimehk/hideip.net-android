@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/premium.dart';
 import '../../state/app_state.dart';
+import '../../vpn_controller.dart';
 import 'hip.dart';
 import 'paywall_screen.dart';
 import 'shell.dart';
@@ -18,7 +20,7 @@ class SettingsScreen extends StatelessWidget {
           'Free trial; ends ${formatPremiumDate(p.renews!)}',
         PremiumStatus.active =>
           '${PlanInfo.of(p.plan!).name} plan; renews ${formatPremiumDate(p.renews!)}',
-        PremiumStatus.expired => 'Trial ended; not renewing',
+        PremiumStatus.expired => 'Subscription ended; not renewing',
         PremiumStatus.none => 'Not subscribed; 7 days free to start',
       };
 
@@ -92,6 +94,8 @@ class SettingsScreen extends StatelessWidget {
                         state.updatePrefs(prefs.copyWith(autoConnect: v)),
                   ),
                 ),
+                if (defaultTargetPlatform == TargetPlatform.android)
+                  _AndroidAlwaysOnRows(state: state),
               ]),
               const HipSectionLabel('Connections'),
               HipListGroup(children: [
@@ -113,5 +117,89 @@ class SettingsScreen extends StatelessWidget {
         ),
       ]),
     );
+  }
+}
+
+/// The Always-on pair of rows (Android only): the in-app opt-in toggle and a
+/// shortcut into the system VPN screen. Android gives no API to flip the
+/// system's Always-on switch from an app, so the closest honest UX is showing
+/// the live system state (the secure setting is readable) and walking the
+/// user to the exact screen. Re-reads the state whenever the app resumes,
+/// i.e. right after the user comes back from Android settings.
+class _AndroidAlwaysOnRows extends StatefulWidget {
+  final AppState state;
+  const _AndroidAlwaysOnRows({required this.state});
+
+  @override
+  State<_AndroidAlwaysOnRows> createState() => _AndroidAlwaysOnRowsState();
+}
+
+class _AndroidAlwaysOnRowsState extends State<_AndroidAlwaysOnRows>
+    with WidgetsBindingObserver {
+  VpnStatus? _status;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState s) {
+    if (s == AppLifecycleState.resumed) _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final st = await VpnController.status();
+    if (mounted) setState(() => _status = st);
+  }
+
+  String get _systemSubtitle {
+    final st = _status;
+    if (st == null) return 'Checking the system Always-on state…';
+    if (!st.alwaysOn) return 'System Always-on is off · tap to open';
+    return st.lockdown
+        ? 'System Always-on is on, with Block connections without VPN'
+        : 'System Always-on is on';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.state;
+    final prefs = state.prefs;
+    return Column(children: [
+      HipListRow(
+        title: 'Always-on VPN',
+        subtitle:
+            'Reconnect the last server when Android\'s Always-on VPN starts hideip.net',
+        trailing: HipToggle(
+          on: prefs.alwaysOn,
+          onChanged: (v) async {
+            await state.updatePrefs(prefs.copyWith(alwaysOn: v));
+            // The system half can only be flipped by the user in Android
+            // settings; take them straight there when it is still off.
+            if (v && _status?.alwaysOn != true) {
+              state.showToast(
+                  'Tap the gear next to hideip.net and turn on Always-on VPN');
+              await VpnController.openVpnSettings();
+            }
+          },
+        ),
+      ),
+      Container(height: 1, color: Hip.line2),
+      HipListRow(
+        title: 'Android VPN settings',
+        subtitle: _systemSubtitle,
+        trailing: Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
+        onTap: VpnController.openVpnSettings,
+      ),
+    ]);
   }
 }

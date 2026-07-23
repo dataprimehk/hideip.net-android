@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,9 +15,10 @@ import 'paywall_screen.dart';
 import 'settings_screen.dart';
 
 /// Whether the "get access from hideip.net" plans flow is offered anywhere.
-/// Stays off until in-app purchases ship; the app must never advertise
-/// something it cannot do yet.
-const bool kPlansAvailable = false;
+/// iOS first: the StoreKit products exist there. Android follows once the
+/// Play Billing catalog is live; until then it keeps the BYO-only story, so
+/// the app never advertises something it cannot do yet.
+final bool kPlansAvailable = defaultTargetPlatform == TargetPlatform.iOS;
 
 enum HipScreen {
   onboarding,
