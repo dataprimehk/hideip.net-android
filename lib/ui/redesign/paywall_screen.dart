@@ -249,11 +249,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
       const SizedBox(height: 13),
       const PremiumBadge(),
       const SizedBox(height: 11),
-      Text('Everything on, everywhere.',
+      Text('One plan. Everything included.',
           style: Hip.sans(750, 23,
               color: Colors.white, height: 1.18, letterSpacing: -.64)),
       const SizedBox(height: 6),
-      Text('One plan. It works where others get blocked.',
+      Text('Fast locations and stealth protocols, no account needed.',
           textAlign: TextAlign.center,
           style: Hip.sans(400, 13,
               color: Colors.white.withValues(alpha: .58), height: 1.5)),
@@ -261,64 +261,48 @@ class _PaywallScreenState extends State<PaywallScreen> {
   }
 
   Widget _benefits() {
-    Widget b(IconData icon, String title, String sub, {bool monoTitle = false}) =>
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(11, 10, 11, 10),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .04),
-              border: Border.all(color: Colors.white.withValues(alpha: .08)),
-              borderRadius: BorderRadius.circular(13),
+    // A compact checklist reads better than a tile grid for short claims:
+    // one line per promise, bold lead, muted detail.
+    Widget row(String title, String sub) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(children: [
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: Brand.hsl(220, 95, 60, .16),
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: Icon(Icons.check, size: 14, color: Brand.hsl(220, 95, 70)),
             ),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  color: Brand.hsl(220, 95, 60, .16),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, size: 14, color: Brand.hsl(220, 95, 70)),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Text.rich(
+                TextSpan(children: [
+                  TextSpan(
+                      text: title,
+                      style: Hip.sans(650, 13.5,
+                          color: Colors.white, letterSpacing: -.14)),
+                  TextSpan(
+                      text: '; $sub',
+                      style: Hip.sans(400, 13.5,
+                          color: Colors.white.withValues(alpha: .55))),
+                ]),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title,
-                          style: monoTitle
-                              ? Hip.mono(650, 12, color: Colors.white)
-                              : Hip.sans(650, 12.5,
-                                  color: Colors.white, letterSpacing: -.13)),
-                      const SizedBox(height: 2),
-                      Text(sub,
-                          style: Hip.sans(400, 10.5,
-                              color: Colors.white.withValues(alpha: .5),
-                              height: 1.35)),
-                    ]),
-              ),
-            ]),
-          ),
+            ),
+          ]),
         );
-    // IntrinsicHeight equalizes the two cards in each row; stretch alone
-    // would inherit the column's unbounded height during layout.
-    return Column(children: [
-      IntrinsicHeight(
-        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          b(Icons.shield_outlined, 'Blocked networks', 'Stealth by default'),
-          const SizedBox(width: 9),
-          b(Icons.public, 'All locations', 'Every location included'),
-        ]),
-      ),
-      const SizedBox(height: 9),
-      IntrinsicHeight(
-        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          b(Icons.bolt_outlined, 'Unlimited', 'No caps; fair use'),
-          const SizedBox(width: 9),
-          b(Icons.devices, '3 devices', 'At the same time'),
-        ]),
-      ),
-    ]);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Column(children: [
+        row('Unblock any network', 'stealth by default'),
+        row('All locations', 'every location included'),
+        row('No logs', 'nothing to record or sell'),
+        row('No account', 'no email, no login'),
+      ]),
+    );
   }
 
   Widget _plans() {
