@@ -9,7 +9,7 @@ import 'premium.dart';
 /// Store-event logging. On iOS these lines reach the system log (os_log) in
 /// release builds too, which is the only way to watch a sandbox purchase on a
 /// device where a debugger cannot attach. Nothing sensitive is logged.
-const bool kIapLog = true;
+const bool kIapLog = false;
 
 void iapLog(String message) {
   // ignore: avoid_print
