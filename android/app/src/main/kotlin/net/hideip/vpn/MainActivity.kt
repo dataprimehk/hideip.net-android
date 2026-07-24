@@ -78,6 +78,17 @@ class MainActivity : FlutterActivity() {
                             .apply()
                         result.success(true)
                     }
+                    "setKillSwitch" -> {
+                        // The service reads this when the core dies unexpectedly
+                        // and decides to reconnect (keeping the TUN up) instead
+                        // of tearing the tunnel down.
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        getSharedPreferences(HideipVpnService.NATIVE_PREFS, MODE_PRIVATE)
+                            .edit()
+                            .putBoolean(HideipVpnService.KEY_KILL_SWITCH, enabled)
+                            .apply()
+                        result.success(true)
+                    }
                     "openVpnSettings" -> {
                         try {
                             startActivity(Intent(Settings.ACTION_VPN_SETTINGS))

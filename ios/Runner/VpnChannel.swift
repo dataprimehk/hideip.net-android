@@ -32,6 +32,7 @@ final class VpnChannel: NSObject {
         case "stop": stop(result)
         case "status": status(result)
         case "stats": stats(result)
+        case "setKillSwitch": setKillSwitch(call, result)
         default: result(FlutterMethodNotImplemented)
         }
     }
@@ -98,6 +99,50 @@ final class VpnChannel: NSObject {
         }
     }
 
+    // MARK: - kill switch
+
+    /// The iOS kill switch is a property of the saved VPN profile, not of the
+    /// running tunnel: on-demand rules make the system redial whenever a
+    /// network is available, so a dropped tunnel comes back without the app.
+    /// includeAllNetworks would add strict blocking on top, but on this
+    /// packetFlow/gvisor stack it kills the tunnel's own traffic (system
+    /// shows VPN up, nothing flows) — verified on device — so it stays off.
+    private func setKillSwitch(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
+        let enabled = (call.arguments as? [String: Any?])?["enabled"] as? Bool ?? false
+        defaults?.set(enabled, forKey: TunnelShared.keyKillSwitch)
+        loadManager { manager in
+            guard let manager else {
+                // No profile yet; start() arms it once prepare has made one.
+                self.answer(result, true)
+                return
+            }
+            self.applyKillSwitch(enabled, to: manager) { _ in
+                self.answer(result, true)
+            }
+        }
+    }
+
+    private func applyKillSwitch(
+        _ enabled: Bool, to manager: NETunnelProviderManager,
+        completion: @escaping (Error?) -> Void
+    ) {
+        manager.isOnDemandEnabled = enabled
+        manager.onDemandRules = enabled ? [NEOnDemandRuleConnect()] : nil
+        if #available(iOS 14.0, *) {
+            // Make sure profiles saved by the build that set this are healed.
+            manager.protocolConfiguration?.includeAllNetworks = false
+        }
+        manager.saveToPreferences { error in
+            guard error == nil else {
+                completion(error)
+                return
+            }
+            // Reload after save, same as prepare(): acting on a freshly saved
+            // profile without a reload is a known NetworkExtension failure.
+            manager.loadFromPreferences { _ in completion(nil) }
+        }
+    }
+
     // MARK: - start / stop
 
     private func start(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
@@ -114,25 +159,50 @@ final class VpnChannel: NSObject {
                     details: nil))
                 return
             }
-            // A stale error from the previous session would trip the status
-            // poll right after this start.
-            self.defaults?.removeObject(forKey: TunnelShared.keyLastError)
-            do {
-                try manager.connection.startVPNTunnel(options: [
-                    TunnelShared.optionConfig: config as NSString,
-                ])
-                self.answer(result, true)
-            } catch {
-                self.answer(result, FlutterError(
-                    code: "start_failed", message: error.localizedDescription, details: nil))
+            let launch = {
+                // A stale error from the previous session would trip the
+                // status poll right after this start.
+                self.defaults?.removeObject(forKey: TunnelShared.keyLastError)
+                do {
+                    try manager.connection.startVPNTunnel(options: [
+                        TunnelShared.optionConfig: config as NSString,
+                    ])
+                    self.answer(result, true)
+                } catch {
+                    self.answer(result, FlutterError(
+                        code: "start_failed", message: error.localizedDescription, details: nil))
+                }
+            }
+            // Re-arm the kill switch if a manual disconnect disarmed it (see
+            // stop()), or arm it for the first time on a fresh profile.
+            let wanted = self.defaults?.bool(forKey: TunnelShared.keyKillSwitch) ?? false
+            if wanted != manager.isOnDemandEnabled {
+                self.applyKillSwitch(wanted, to: manager) { _ in launch() }
+            } else {
+                launch()
             }
         }
     }
 
     private func stop(_ result: @escaping FlutterResult) {
         loadManager { manager in
-            manager?.connection.stopVPNTunnel()
-            self.answer(result, true)
+            guard let manager else {
+                self.answer(result, true)
+                return
+            }
+            if manager.isOnDemandEnabled {
+                // With on-demand armed, iOS would redial the moment we hang
+                // up; a user-requested disconnect must disarm first. The next
+                // start() re-arms from the stored choice.
+                manager.isOnDemandEnabled = false
+                manager.saveToPreferences { _ in
+                    manager.connection.stopVPNTunnel()
+                    self.answer(result, true)
+                }
+            } else {
+                manager.connection.stopVPNTunnel()
+                self.answer(result, true)
+            }
         }
     }
 

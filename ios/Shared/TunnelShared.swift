@@ -16,6 +16,11 @@ enum TunnelShared {
     /// successful start.
     static let keyLastError = "tunnel.lastError"
 
+    /// The user's kill switch choice. The app arms/disarms the profile's
+    /// on-demand rules from it; stored so start() can re-arm after a manual
+    /// disconnect disarmed them.
+    static let keyKillSwitch = "tunnel.killSwitch"
+
     // Live traffic counters. Rates are bytes/second, totals cumulative bytes
     // for the session; all zeroed on stop.
     static let keyUplink = "tunnel.uplink"

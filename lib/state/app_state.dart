@@ -128,6 +128,9 @@ class AppState extends ChangeNotifier {
     // Keep the native side's copy of the Always-on opt-in current (the service
     // reads it on system-initiated starts, when no Dart is running).
     VpnController.setAlwaysOn(_prefs.alwaysOn);
+    // Same for the kill switch: the native layer acts on it (on-drop
+    // reconnect / on-demand rules) with no Dart in the loop.
+    VpnController.setKillSwitch(_prefs.killSwitch);
     _premium = await Premium.load();
     iapLog('[iap] loaded: ${_premium.status.name} plan=${_premium.plan?.name}'
         ' renews=${_premium.renews} now=${DateTime.now()}');
@@ -278,10 +281,12 @@ class AppState extends ChangeNotifier {
 
   Future<void> updatePrefs(UiPrefs next) async {
     final alwaysOnChanged = next.alwaysOn != _prefs.alwaysOn;
+    final killSwitchChanged = next.killSwitch != _prefs.killSwitch;
     _prefs = next;
     notifyListeners();
     await next.save();
     if (alwaysOnChanged) await VpnController.setAlwaysOn(next.alwaysOn);
+    if (killSwitchChanged) await VpnController.setKillSwitch(next.killSwitch);
   }
 
   void showToast(String message) {
@@ -445,7 +450,8 @@ class AppState extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      final config = SingboxConfig.buildJson(profile);
+      final config =
+          SingboxConfig.buildJson(profile, killSwitch: _prefs.killSwitch);
       await VpnController.start(config, label: profile.name);
       _startStatusPoll();
       // Optimistic; the poll will confirm/flip to error.

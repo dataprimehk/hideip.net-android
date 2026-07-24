@@ -94,6 +94,24 @@ class SettingsScreen extends StatelessWidget {
                         state.updatePrefs(prefs.copyWith(autoConnect: v)),
                   ),
                 ),
+                HipListRow(
+                  title: 'Kill switch',
+                  // Android holds the TUN up through a drop (traffic is
+                  // blocked, not leaked); iOS can only redial via on-demand.
+                  subtitle: defaultTargetPlatform == TargetPlatform.android
+                      ? 'Block traffic and reconnect if the VPN drops unexpectedly'
+                      : 'Reconnect automatically if the VPN drops unexpectedly',
+                  trailing: HipToggle(
+                    on: prefs.killSwitch,
+                    onChanged: (v) async {
+                      await state.updatePrefs(prefs.copyWith(killSwitch: v));
+                      if (state.isConnected) {
+                        state.showToast(
+                            'Applies fully from the next connection');
+                      }
+                    },
+                  ),
+                ),
                 if (defaultTargetPlatform == TargetPlatform.android)
                   _AndroidAlwaysOnRows(state: state),
               ]),

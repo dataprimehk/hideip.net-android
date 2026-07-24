@@ -10,6 +10,7 @@ class UiPrefs {
   static const _kDarkMode = 'ui_darkmode_v1';
   static const _kHomeMap = 'ui_homemap_v1';
   static const _kAlwaysOn = 'ui_alwayson_v1';
+  static const _kKillSwitch = 'ui_killswitch_v1';
 
   final bool advanced;
   final bool onboarded;
@@ -20,6 +21,10 @@ class UiPrefs {
   // Opt-in for Android's Always-on VPN: when true the native service may
   // reconnect the last server on a system-initiated start.
   final bool alwaysOn;
+  // Kill switch: don't leak to the physical network if the tunnel drops.
+  // Android: strict routing + the service reconnects (keeping the TUN up)
+  // when the core dies; iOS: on-demand rules (the system redials itself).
+  final bool killSwitch;
 
   const UiPrefs({
     this.advanced = false,
@@ -29,6 +34,7 @@ class UiPrefs {
     this.darkMode = false,
     this.homeMap = false,
     this.alwaysOn = false,
+    this.killSwitch = false,
   });
 
   UiPrefs copyWith({
@@ -39,6 +45,7 @@ class UiPrefs {
     bool? darkMode,
     bool? homeMap,
     bool? alwaysOn,
+    bool? killSwitch,
   }) =>
       UiPrefs(
         advanced: advanced ?? this.advanced,
@@ -48,6 +55,7 @@ class UiPrefs {
         darkMode: darkMode ?? this.darkMode,
         homeMap: homeMap ?? this.homeMap,
         alwaysOn: alwaysOn ?? this.alwaysOn,
+        killSwitch: killSwitch ?? this.killSwitch,
       );
 
   static Future<UiPrefs> load() async {
@@ -60,6 +68,7 @@ class UiPrefs {
       darkMode: p.getBool(_kDarkMode) ?? false,
       homeMap: p.getBool(_kHomeMap) ?? false,
       alwaysOn: p.getBool(_kAlwaysOn) ?? false,
+      killSwitch: p.getBool(_kKillSwitch) ?? false,
     );
   }
 
@@ -72,5 +81,6 @@ class UiPrefs {
     await p.setBool(_kDarkMode, darkMode);
     await p.setBool(_kHomeMap, homeMap);
     await p.setBool(_kAlwaysOn, alwaysOn);
+    await p.setBool(_kKillSwitch, killSwitch);
   }
 }

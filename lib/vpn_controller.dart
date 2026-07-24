@@ -56,6 +56,20 @@ class VpnController {
     }
   }
 
+  /// Records the user's kill switch choice natively. Android: the service
+  /// reads it when the core dies unexpectedly and reconnects instead of
+  /// tearing the TUN down. iOS: arms/disarms on-demand rules on the profile
+  /// (the system redials whenever a network is available).
+  static Future<void> setKillSwitch(bool enabled) async {
+    try {
+      await _channel.invokeMethod('setKillSwitch', {'enabled': enabled});
+    } on MissingPluginException {
+      // No native side: nothing to record.
+    } on PlatformException {
+      // ignore
+    }
+  }
+
   /// Opens the system VPN settings screen (where Android's Always-on VPN
   /// toggle lives). Android only; a no-op elsewhere.
   static Future<void> openVpnSettings() async {

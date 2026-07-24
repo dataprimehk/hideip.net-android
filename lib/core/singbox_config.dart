@@ -22,10 +22,14 @@ class SingboxConfig {
   /// Build the config for a single selected [profile]. [logLevel] is "info"
   /// during development; switch to "warn" for release builds. [tunStack] lets
   /// tests pin the stack; it defaults to the right one for the platform.
+  /// [killSwitch] turns on strict_route, which closes the routing side-doors
+  /// around the TUN while the tunnel is up (the drop-recovery half of the
+  /// kill switch lives in the native layer).
   static Map<String, dynamic> build(
     ProxyProfile profile, {
     String logLevel = 'warn',
     String? tunStack,
+    bool killSwitch = false,
   }) {
     final stack = tunStack ?? (Platform.isIOS ? 'gvisor' : 'system');
     return {
@@ -54,7 +58,7 @@ class SingboxConfig {
           // failed. We trade a little per-packet efficiency for "never breaks".
           'mtu': 1280,
           'auto_route': true,
-          'strict_route': false,
+          'strict_route': killSwitch,
           'stack': stack,
         },
       ],
@@ -77,6 +81,7 @@ class SingboxConfig {
 
   /// Convenience: build + encode to the JSON string VpnController.start expects.
   static String buildJson(ProxyProfile profile,
-          {String logLevel = 'warn', String? tunStack}) =>
-      jsonEncode(build(profile, logLevel: logLevel, tunStack: tunStack));
+          {String logLevel = 'warn', String? tunStack, bool killSwitch = false}) =>
+      jsonEncode(build(profile,
+          logLevel: logLevel, tunStack: tunStack, killSwitch: killSwitch));
 }

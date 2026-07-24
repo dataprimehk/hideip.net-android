@@ -65,6 +65,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         // decides how we respond when the system starts us because of it.
         const val NATIVE_PREFS = "hideip_native"
         const val KEY_ALWAYS_ON = "always_on_enabled"
+        const val KEY_KILL_SWITCH = "kill_switch_enabled"
         private const val LAST_CONFIG_FILE = "last_config.json"
         private const val LAST_LABEL_FILE = "last_label.txt"
 
@@ -101,6 +102,13 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     // because this libbox build does not reliably close it itself.
     private var coreTunFd: Int = -1
     private var setupDone = false
+
+    // Distinguishes teardown the user (or the system) asked for from the core
+    // dying on its own. serviceStop() consults it: an unexpected death with the
+    // kill switch on triggers a reconnect instead of a teardown.
+    @Volatile private var stopRequested = false
+    private var lastReconnectAt = 0L
+    private var reconnectAttempts = 0
 
     // Default-network monitoring. sing-box's `auto_detect_interface` needs to be
     // told which physical interface its (protected) outbound sockets should bind
@@ -193,6 +201,7 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     private fun startTunnel(config: String, label: String? = null) {
+        stopRequested = false
         try {
             ensureSetup()
             startForegroundNotification(label)
@@ -262,6 +271,10 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     private fun stopTunnel(stopStartId: Int = -1) {
+        // Every intentional teardown funnels through here; mark it before
+        // closeService so the serviceStop callback it triggers doesn't read
+        // this as the core dying and try to reconnect.
+        stopRequested = true
         running = false
 
         // Drop the status client before the server it reads from goes away.
@@ -642,7 +655,61 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     override fun serviceStop() {
-        stopTunnel()
+        if (!stopRequested && killSwitchEnabled()) {
+            android.os.Handler(mainLooper).post { reconnectForKillSwitch() }
+        } else {
+            stopTunnel()
+        }
+    }
+
+    private fun killSwitchEnabled(): Boolean =
+        getSharedPreferences(NATIVE_PREFS, MODE_PRIVATE)
+            .getBoolean(KEY_KILL_SWITCH, false)
+
+    /** The core died without anyone asking it to and the kill switch is on:
+     *  restart it with the last config instead of tearing the tunnel down.
+     *  The current TUN stays up through the restart, so with the default
+     *  route still pointing at it traffic blackholes instead of leaking out
+     *  the physical interface; the fresh core's openTun() establishes a
+     *  replacement interface, and only then is the old core fd closed. */
+    private fun reconnectForKillSwitch() {
+        if (stopRequested) return
+        val saved = readLastConfig()
+        // Rapid successive deaths mean something is genuinely broken (bad
+        // config, revoked permission); give up so we don't loop forever.
+        val now = android.os.SystemClock.elapsedRealtime()
+        reconnectAttempts =
+            if (now - lastReconnectAt < 15_000) reconnectAttempts + 1 else 1
+        lastReconnectAt = now
+        if (saved == null || reconnectAttempts > 3) {
+            Log.w(TAG, "kill switch: giving up after $reconnectAttempts attempts")
+            lastError = "Connection dropped"
+            stopTunnel()
+            return
+        }
+        Log.i(TAG, "kill switch: core died, reconnecting (attempt $reconnectAttempts)")
+        val staleFd = coreTunFd
+        coreTunFd = -1
+        try {
+            statusClient?.disconnect()
+        } catch (_: Exception) {}
+        statusClient = null
+        try {
+            closeDefaultInterfaceMonitor(interfaceListener)
+        } catch (_: Exception) {}
+        // The core is already dead, so no closeService(); just drop the server.
+        try {
+            commandServer?.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "close: ${e.message}")
+        }
+        commandServer = null
+        startTunnel(saved.first, saved.second)
+        if (staleFd >= 0) {
+            try {
+                ParcelFileDescriptor.adoptFd(staleFd).close()
+            } catch (_: Exception) {}
+        }
     }
 
     override fun getSystemProxyStatus(): io.nekohasekai.libbox.SystemProxyStatus? = null
