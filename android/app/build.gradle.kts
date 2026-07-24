@@ -57,6 +57,18 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // Ship only the ABIs real phones use. The sing-box core is a Go
+            // binary that costs ~60 MB per architecture, and x86_64 serves
+            // emulators alone. These libraries arrive prebuilt from the libbox
+            // AAR and Flutter, so they are dropped at packaging time rather
+            // than through ndk.abiFilters, which only covers locally compiled
+            // sources. Debug builds keep every ABI so the emulator stays usable.
+            packaging {
+                jniLibs {
+                    excludes += "lib/x86_64/**"
+                    excludes += "lib/x86/**"
+                }
+            }
         }
     }
 }
