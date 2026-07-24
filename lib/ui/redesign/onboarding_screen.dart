@@ -80,13 +80,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         2 => _page(
             lit: 3,
-            title: 'Access,\ntwo ways.',
+            title: kPlansAvailable
+                ? 'Access,\ntwo ways.'
+                : 'Works with\nany provider.',
             bodyWidget: Column(children: [
               const SizedBox(height: 6),
-              _way(Icons.shield_outlined, 'Buy access in the app',
-                  'Pick a plan from hideip.net and connect instantly'),
-              Container(height: 1, color: Colors.white.withValues(alpha: .1)),
-              _way(Icons.link, 'Or bring your own',
+              // The in-app plans pitch only where the catalog is live.
+              if (kPlansAvailable) ...[
+                _way(Icons.shield_outlined, 'Buy access in the app',
+                    'Pick a plan from hideip.net and connect instantly'),
+                Container(
+                    height: 1, color: Colors.white.withValues(alpha: .1)),
+              ],
+              _way(
+                  Icons.link,
+                  kPlansAvailable ? 'Or bring your own' : 'Bring your own',
                   'Paste a vless:// or vmess:// link, a subscription URL, or scan a QR, from any provider'),
             ]),
             cta: HipCta('Next', onTap: () => setState(() => _step = 3)),
