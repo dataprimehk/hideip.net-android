@@ -353,15 +353,29 @@ class AppState extends ChangeNotifier {
   Future<void> addProfiles(List<ProxyProfile> newProfiles,
       {bool select = false}) async {
     if (newProfiles.isEmpty) return;
+    final sel = selected;
+    // Re-importing a subscription the list already holds must replace its
+    // group, not stack a second copy of every server next to the first.
+    final subUrls = {
+      for (final p in newProfiles)
+        if (p.subUrl != null) p.subUrl!,
+    };
+    if (subUrls.isNotEmpty) {
+      _profiles.removeWhere((p) => !p.premium && subUrls.contains(p.subUrl));
+    }
     _profiles.addAll(newProfiles);
     // A subscription import may have just written fresh SubInfo to the store
     // (import screen does this directly); pull it in so its plan row shows now.
-    if (newProfiles.any((p) => p.subUrl != null)) {
+    if (subUrls.isNotEmpty) {
       _subInfos.addAll(await SubInfoStore.load());
     }
     if (select || _selected < 0) {
       _selected = _profiles.length - newProfiles.length;
       await updatePrefs(_prefs.copyWith(autoSelect: false));
+    } else {
+      // The removal above may have shifted (or removed) the selected profile.
+      _selected = sel == null ? -1 : _profiles.indexOf(sel);
+      if (_selected < 0 && _profiles.isNotEmpty) _selected = 0;
     }
     await _persist();
     notifyListeners();
