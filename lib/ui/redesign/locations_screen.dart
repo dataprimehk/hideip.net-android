@@ -128,43 +128,48 @@ class LocationsScreen extends StatelessWidget {
                   onTap: () => _select(null),
                 ),
               ]),
-              const _PremiumSectionHead(),
-              if (hasSub && premiumLocs.isNotEmpty)
-                HipListGroup(children: [
-                  for (final l in premiumLocs) serverRow(l),
-                ])
-              else if (hasSub)
-                // Subscribed, but the profiles have not landed yet (first
-                // provision in flight, or offline): keep the place visible.
-                HipListGroup(children: [
-                  HipListRow(
-                    leading: HipFlag(
-                        cc: '',
-                        child: SizedBox(
-                          width: 15,
-                          height: 15,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Hip.blueDeep),
-                        )),
-                    title: 'Setting up your servers',
-                    subtitle: 'Premium locations appear here shortly',
-                  ),
-                ])
-              else
-                HipListGroup(children: [
-                  HipListRow(
-                    leading: HipFlag(
-                        cc: '',
-                        child: Text('IP',
-                            style: Hip.mono(700, 13,
-                                color: Hip.blueDeep, letterSpacing: .5))),
-                    title: 'Premium servers',
-                    subtitle: 'Fast locations run by hideip.net',
-                    trailing:
-                        Icon(Icons.chevron_right, size: 18, color: Hip.muted2),
-                    onTap: () => nav.openPaywall(HipScreen.locations),
-                  ),
-                ]),
+              // The whole Premium section rides on the plans catalog being
+              // live for this platform; hasSub keeps an existing subscriber's
+              // servers visible regardless.
+              if (kPlansAvailable || hasSub) ...[
+                const _PremiumSectionHead(),
+                if (hasSub && premiumLocs.isNotEmpty)
+                  HipListGroup(children: [
+                    for (final l in premiumLocs) serverRow(l),
+                  ])
+                else if (hasSub)
+                  // Subscribed, but the profiles have not landed yet (first
+                  // provision in flight, or offline): keep the place visible.
+                  HipListGroup(children: [
+                    HipListRow(
+                      leading: HipFlag(
+                          cc: '',
+                          child: SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Hip.blueDeep),
+                          )),
+                      title: 'Setting up your servers',
+                      subtitle: 'Premium locations appear here shortly',
+                    ),
+                  ])
+                else
+                  HipListGroup(children: [
+                    HipListRow(
+                      leading: HipFlag(
+                          cc: '',
+                          child: Text('IP',
+                              style: Hip.mono(700, 13,
+                                  color: Hip.blueDeep, letterSpacing: .5))),
+                      title: 'Premium servers',
+                      subtitle: 'Fast locations run by hideip.net',
+                      trailing: Icon(Icons.chevron_right,
+                          size: 18, color: Hip.muted2),
+                      onTap: () => nav.openPaywall(HipScreen.locations),
+                    ),
+                  ]),
+              ],
               const HipSectionLabel('Your servers'),
               if (userLocs.isEmpty)
                 HipCard(
