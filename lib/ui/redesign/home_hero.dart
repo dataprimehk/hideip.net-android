@@ -92,14 +92,14 @@ class _HomeHeroScreenState extends State<HomeHeroScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Always-on VPN is still active',
+              Text('Always-on VPN is on',
                   style: Hip.sans(650, 17, color: Hip.ink)),
               const SizedBox(height: 10),
               Text(
-                'Android\'s Always-on VPN is enabled for hideip.net, so the '
-                'system may keep blocking traffic while you are disconnected. '
-                'Turn it off in Android settings, or enable Always-on VPN in '
-                'app Settings to reconnect automatically.',
+                'Android keeps hideip.net\'s Always-on VPN active, so traffic '
+                'stays blocked while you are disconnected. Turn it off in '
+                'Android settings, or turn on Always-on in Settings to '
+                'reconnect automatically.',
                 style: Hip.sans(550, 14, color: Hip.inkSoft, height: 1.45),
               ),
               const SizedBox(height: 18),
