@@ -10,6 +10,7 @@ import '../../core/location.dart';
 import '../../core/ping.dart';
 import '../../core/proxy_profile.dart';
 import '../../core/share_link_parser.dart';
+import '../../core/sub_info.dart';
 import '../../core/subscription.dart';
 import '../../state/app_state.dart';
 import '../brand.dart';
@@ -150,6 +151,10 @@ class _ImportScreenState extends State<ImportScreen> {
         // when the provider rotates its servers.
         profiles =
             parsed.profiles.map((p) => p.copyWith(subUrl: input)).toList();
+        // Capture any plan metadata the provider sent (data used, expiry,
+        // panel link) so the locations screen can show it under this sub.
+        final info = SubInfo.fromHeaders(res.headers, fetchedAt: DateTime.now());
+        if (info != null) await SubInfoStore.put(input, info);
       } else if (isSub) {
         final parsed = Subscription.parse(input);
         if (parsed.profiles.isEmpty) throw _subError(parsed);

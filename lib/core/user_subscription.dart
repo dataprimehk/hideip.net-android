@@ -2,6 +2,7 @@ import 'package:http/http.dart' as http;
 
 import 'app_version.dart';
 import 'proxy_profile.dart';
+import 'sub_info.dart';
 import 'subscription.dart';
 
 /// Refreshing user-imported (BYOC) subscriptions. A user pastes a provider's
@@ -17,24 +18,39 @@ class UserSubscriptionService {
 
   /// Fetch and parse one subscription URL. Null on any transient failure so
   /// the caller keeps the servers it already has (a flaky network must not
-  /// strand a working import); an empty list only on a definitive "gone"
-  /// (404/410 — the provider retired the link). Fresh profiles are tagged with
-  /// [url] so they stay grouped under their origin.
-  Future<List<ProxyProfile>?> fetch(String url) async {
+  /// strand a working import); a result with an empty profile list only on a
+  /// definitive "gone" (404/410 — the provider retired the link). Fresh
+  /// profiles are tagged with [url] so they stay grouped under their origin,
+  /// and any plan headers the provider sent ride along as [SubFetch.info].
+  Future<SubFetch?> fetch(String url) async {
     try {
       final resp = await _client
           .get(Uri.parse(url), headers: subscriptionHeaders)
           .timeout(const Duration(seconds: 20));
-      if (resp.statusCode == 404 || resp.statusCode == 410) return const [];
+      if (resp.statusCode == 404 || resp.statusCode == 410) {
+        return const SubFetch(profiles: [], info: null);
+      }
       if (resp.statusCode != 200) return null;
-      return Subscription.parse(resp.body)
+      final profiles = Subscription.parse(resp.body)
           .profiles
           .map((p) => p.copyWith(subUrl: url))
           .toList();
+      final info =
+          SubInfo.fromHeaders(resp.headers, fetchedAt: DateTime.now());
+      return SubFetch(profiles: profiles, info: info);
     } catch (_) {
       return null;
     }
   }
+}
+
+/// The outcome of a subscription fetch: the fresh server list plus the plan
+/// metadata parsed from the response headers (null when the provider sent
+/// none). Kept together so a single fetch surfaces both to the caller.
+class SubFetch {
+  final List<ProxyProfile> profiles;
+  final SubInfo? info;
+  const SubFetch({required this.profiles, required this.info});
 }
 
 /// The distinct user-subscription URLs present in [profiles], in first-seen

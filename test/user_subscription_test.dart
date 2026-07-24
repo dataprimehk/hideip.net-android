@@ -27,8 +27,32 @@ void main() {
               200)));
       final fresh = await svc.fetch(url);
       expect(fresh, isNotNull);
-      expect(fresh!.single.name, 'Fresh');
-      expect(fresh.single.subUrl, url);
+      expect(fresh!.profiles.single.name, 'Fresh');
+      expect(fresh.profiles.single.subUrl, url);
+      // No plan headers on this response, so no SubInfo.
+      expect(fresh.info, isNull);
+    });
+
+    test('surfaces SubInfo parsed from the response headers', () async {
+      final svc = UserSubscriptionService(
+          client: MockClient((req) async => http.Response(
+                'vless://11111111-1111-1111-1111-111111111111@9.9.9.9:443'
+                '?encryption=none#Fresh\n',
+                200,
+                headers: {
+                  'subscription-userinfo':
+                      'upload=1; download=2; total=100; expire=1800000000',
+                  'profile-title': 'QuietProxy',
+                  'profile-web-page-url': 'https://panel.example',
+                },
+              )));
+      final fresh = await svc.fetch(url);
+      expect(fresh, isNotNull);
+      expect(fresh!.info, isNotNull);
+      expect(fresh.info!.title, 'QuietProxy');
+      expect(fresh.info!.totalBytes, 100);
+      expect(fresh.info!.usedBytes, 3);
+      expect(fresh.info!.webPageUrl, 'https://panel.example');
     });
 
     test('returns null on a transient failure so callers keep what they have',
@@ -38,12 +62,14 @@ void main() {
       expect(await svc.fetch(url), isNull);
     });
 
-    test('returns empty only when the provider retired the link (404/410)',
+    test('returns empty profiles only when the provider retired the link',
         () async {
       for (final code in [404, 410]) {
         final svc = UserSubscriptionService(
             client: MockClient((req) async => http.Response('', code)));
-        expect(await svc.fetch(url), isEmpty);
+        final res = await svc.fetch(url);
+        expect(res, isNotNull);
+        expect(res!.profiles, isEmpty);
       }
     });
   });

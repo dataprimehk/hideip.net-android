@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/country_names.dart';
 import '../../core/location.dart';
+import '../../core/sub_info.dart';
 import '../../core/votes.dart';
 import '../../state/app_state.dart';
 import 'hip.dart';
@@ -13,6 +15,43 @@ class LocationsScreen extends StatelessWidget {
   final AppState state;
   final HipNav nav;
   const LocationsScreen({super.key, required this.state, required this.nav});
+
+  /// The "Your servers" list, grouped: profiles that came from the same
+  /// subscription URL sit under a compact header row (provider title, data
+  /// used, expiry); everything else (single-link imports) stays flat above.
+  /// Order follows first appearance so the list stays stable across refreshes.
+  List<Widget> _buildUserServers(
+      List<Location> userLocs, Widget Function(Location) serverRow) {
+    final loose = <Location>[]; // no subUrl: plain imports
+    final grouped = <String, List<Location>>{}; // subUrl -> its locations
+    final order = <String>[]; // subUrls in first-seen order
+    for (final l in userLocs) {
+      final u = l.profile.subUrl;
+      if (u == null) {
+        loose.add(l);
+      } else {
+        final group = grouped[u];
+        if (group == null) {
+          order.add(u);
+          grouped[u] = [l];
+        } else {
+          group.add(l);
+        }
+      }
+    }
+
+    return [
+      if (loose.isNotEmpty)
+        HipListGroup(children: [for (final l in loose) serverRow(l)]),
+      for (final u in order) ...[
+        _SubHeader(
+          info: state.subInfoFor(u),
+          fallbackHost: Uri.tryParse(u)?.host ?? u,
+        ),
+        HipListGroup(children: [for (final l in grouped[u]!) serverRow(l)]),
+      ],
+    ];
+  }
 
   Future<void> _select(Location? loc) async {
     await state.selectLocation(loc);
@@ -135,9 +174,7 @@ class LocationsScreen extends StatelessWidget {
                   ),
                 )
               else
-                HipListGroup(children: [
-                  for (final l in userLocs) serverRow(l),
-                ]),
+                ..._buildUserServers(userLocs, serverRow),
               if (userLocs.isNotEmpty)
                 const HipSubnote(
                     'Names and flags are cleaned up automatically from whatever your provider sends.'),
@@ -163,6 +200,93 @@ class LocationsScreen extends StatelessWidget {
         ),
       ]),
     );
+  }
+}
+
+/// Compact header above a subscription's servers: the provider title (or the
+/// URL host when it sent none), and, when the provider reported them, the data
+/// used against the quota and the expiry date. Numbers and the date render in
+/// mono per the brand rules. A trailing icon opens the seller's panel when a
+/// web-page URL is known. Deliberately one quiet row, no card-within-card.
+class _SubHeader extends StatelessWidget {
+  final SubInfo? info;
+  final String fallbackHost;
+  const _SubHeader({required this.info, required this.fallbackHost});
+
+  @override
+  Widget build(BuildContext context) {
+    final i = info;
+    final title = (i?.title != null && i!.title!.isNotEmpty) ? i.title! : fallbackHost;
+
+    // Data used against the quota, e.g. "1.5 / 50.0 GB". Only when a quota is
+    // known; a bare used figure without a total reads as noise here.
+    String? usage;
+    if (i != null && i.hasQuota) {
+      usage = '${SubInfo.formatBytes(i.usedBytes).replaceAll(' GB', '')}'
+          ' / ${SubInfo.formatBytes(i.totalBytes!)}';
+    }
+
+    // Expiry: past -> danger; within 7 days -> muted date; otherwise silent
+    // (unless usage carries the row) to keep the header short.
+    String? expiryText;
+    Color? expiryColor;
+    final e = i?.expire;
+    if (e != null) {
+      final now = DateTime.now();
+      if (e.isBefore(now)) {
+        expiryText = 'Expired ${_date(e)}';
+        expiryColor = Hip.danger;
+      } else if (e.difference(now).inDays <= 7) {
+        expiryText = 'Expires ${_date(e)}';
+        expiryColor = Hip.muted;
+      }
+    }
+
+    final webUrl = i?.webPageUrl;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 16, 6, 6),
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title.toUpperCase(),
+                overflow: TextOverflow.ellipsis,
+                style: Hip.sans(650, 12, color: Hip.muted2, letterSpacing: .84)),
+            if (usage != null || expiryText != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Row(children: [
+                  if (usage != null)
+                    Text(usage, style: Hip.mono(600, 11, color: Hip.muted)),
+                  if (usage != null && expiryText != null)
+                    Text('  ·  ', style: Hip.sans(400, 11, color: Hip.muted2)),
+                  if (expiryText != null)
+                    Text(expiryText,
+                        style: Hip.mono(600, 11, color: expiryColor)),
+                ]),
+              ),
+          ]),
+        ),
+        // url_launcher is already a dependency (used by the paywall), so the
+        // panel button ships; no deferral needed.
+        if (webUrl != null)
+          HipIconButton(
+            Icons.open_in_new,
+            color: Hip.muted2,
+            onTap: () => launchUrl(Uri.parse(webUrl),
+                mode: LaunchMode.externalApplication),
+          ),
+      ]),
+    );
+  }
+
+  /// Short date like "24 Jul 2026" (mono digits carry it).
+  static String _date(DateTime d) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
   }
 }
 

@@ -14,6 +14,7 @@ import '../core/proxy_profile.dart';
 import '../core/purchase_service.dart';
 import '../core/share_link_parser.dart';
 import '../core/singbox_config.dart';
+import '../core/sub_info.dart';
 import '../core/subscription.dart';
 import '../core/ui_prefs.dart';
 import '../core/user_subscription.dart';
@@ -41,6 +42,9 @@ class AppState extends ChangeNotifier {
   final PurchaseService _purchases = PurchaseService();
   final ProvisioningService _provisioning = ProvisioningService();
   final UserSubscriptionService _userSubs = UserSubscriptionService();
+  // Plan metadata (data used, expiry, provider name/links) keyed by
+  // subscription URL, captured from the provider's response headers on refresh.
+  final Map<String, SubInfo> _subInfos = {};
   Premium _premium = const Premium.none();
   String? _toast;
   Timer? _toastTimer;
@@ -64,6 +68,10 @@ class AppState extends ChangeNotifier {
   VpnStats get stats => _stats;
   bool get pinging => _pinging;
   PingResult? pingFor(ProxyProfile p) => _pings['${p.server}:${p.port}'];
+
+  /// Plan metadata the provider sent for the subscription at [subUrl] (data
+  /// used, expiry, panel link), or null when none was captured.
+  SubInfo? subInfoFor(String subUrl) => _subInfos[subUrl];
   UiPrefs get prefs => _prefs;
   /// The current entitlement with expiry applied at read time. The persisted
   /// copy is only re-evaluated on launch, but a session can outlive the
@@ -154,6 +162,7 @@ class AppState extends ChangeNotifier {
       if (p.isOn && jws != null) _provisionPremium(jws);
     });
     _profiles.addAll(await ProfileStore.load());
+    _subInfos.addAll(await SubInfoStore.load());
     final savedIdx = await ProfileStore.loadSelectedIndex();
     if (savedIdx >= 0 && savedIdx < _profiles.length) _selected = savedIdx;
     // Keep the premium server profiles current (or drop them once the
@@ -256,9 +265,14 @@ class AppState extends ChangeNotifier {
   /// clears a group, since the provider retired that link.
   Future<void> _refreshUserSubscriptions() async {
     for (final url in userSubUrls(_profiles)) {
-      final fresh = await _userSubs.fetch(url);
-      if (fresh == null) continue; // transient failure: keep what we have
-      _applyMerged(mergeUserSubProfiles(_profiles, url, fresh));
+      final result = await _userSubs.fetch(url);
+      if (result == null) continue; // transient failure: keep what we have
+      if (result.info != null) {
+        _subInfos[url] = result.info!;
+        await SubInfoStore.put(url, result.info!);
+        notifyListeners();
+      }
+      _applyMerged(mergeUserSubProfiles(_profiles, url, result.profiles));
     }
   }
 
@@ -340,6 +354,11 @@ class AppState extends ChangeNotifier {
       {bool select = false}) async {
     if (newProfiles.isEmpty) return;
     _profiles.addAll(newProfiles);
+    // A subscription import may have just written fresh SubInfo to the store
+    // (import screen does this directly); pull it in so its plan row shows now.
+    if (newProfiles.any((p) => p.subUrl != null)) {
+      _subInfos.addAll(await SubInfoStore.load());
+    }
     if (select || _selected < 0) {
       _selected = _profiles.length - newProfiles.length;
       await updatePrefs(_prefs.copyWith(autoSelect: false));
