@@ -145,7 +145,10 @@ class _ImportScreenState extends State<ImportScreen> {
         }
         final parsed = Subscription.parse(res.body);
         if (parsed.profiles.isEmpty) throw _subError(parsed);
-        profiles = parsed.profiles;
+        // Remember the origin so the app can re-pull it on later launches
+        // when the provider rotates its servers.
+        profiles =
+            parsed.profiles.map((p) => p.copyWith(subUrl: input)).toList();
       } else if (isSub) {
         final parsed = Subscription.parse(input);
         if (parsed.profiles.isEmpty) throw _subError(parsed);

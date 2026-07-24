@@ -26,6 +26,12 @@ class ProxyProfile {
   /// lapses; user imports are never touched.
   final bool premium;
 
+  /// For a profile imported from a user's own subscription URL, that URL.
+  /// Null for single-link imports and pasted blobs (nothing to re-fetch).
+  /// The app re-pulls each distinct [subUrl] on launch so a provider rotating
+  /// its servers doesn't silently strand the user on dead nodes.
+  final String? subUrl;
+
   const ProxyProfile({
     required this.name,
     required this.protocol,
@@ -35,9 +41,11 @@ class ProxyProfile {
     this.extraOutbounds = const [],
     this.cc,
     this.premium = false,
+    this.subUrl,
   });
 
-  ProxyProfile copyWith({String? cc, bool? premium}) => ProxyProfile(
+  ProxyProfile copyWith({String? cc, bool? premium, String? subUrl}) =>
+      ProxyProfile(
         name: name,
         protocol: protocol,
         server: server,
@@ -46,6 +54,7 @@ class ProxyProfile {
         extraOutbounds: extraOutbounds,
         cc: cc ?? this.cc,
         premium: premium ?? this.premium,
+        subUrl: subUrl ?? this.subUrl,
       );
 
   /// A copy of [outbound] with the given [tag] injected.

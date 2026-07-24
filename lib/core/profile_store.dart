@@ -53,6 +53,7 @@ class ProfileStore {
         if (p.extraOutbounds.isNotEmpty) 'extraOutbounds': p.extraOutbounds,
         if (p.cc != null) 'cc': p.cc,
         if (p.premium) 'premium': true,
+        if (p.subUrl != null) 'subUrl': p.subUrl,
       };
 
   static ProxyProfile _fromMap(Map<String, dynamic> m) => ProxyProfile(
@@ -71,5 +72,6 @@ class ProfileStore {
         // the backend's old "hideip.net " name prefix; migrate them here.
         premium: m['premium'] == true ||
             (m['name'] as String? ?? '').startsWith('hideip.net '),
+        subUrl: m['subUrl'] as String?,
       );
 }

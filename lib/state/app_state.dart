@@ -16,6 +16,7 @@ import '../core/share_link_parser.dart';
 import '../core/singbox_config.dart';
 import '../core/subscription.dart';
 import '../core/ui_prefs.dart';
+import '../core/user_subscription.dart';
 import '../vpn_controller.dart';
 
 enum ConnState { disconnected, connecting, connected, error }
@@ -39,6 +40,7 @@ class AppState extends ChangeNotifier {
   UiPrefs _prefs = const UiPrefs();
   final PurchaseService _purchases = PurchaseService();
   final ProvisioningService _provisioning = ProvisioningService();
+  final UserSubscriptionService _userSubs = UserSubscriptionService();
   Premium _premium = const Premium.none();
   String? _toast;
   Timer? _toastTimer;
@@ -154,6 +156,9 @@ class AppState extends ChangeNotifier {
     // Keep the premium server profiles current (or drop them once the
     // subscription lapsed); fire-and-forget, list updates when it lands.
     _refreshPremiumProfiles();
+    // Same for the user's own subscription imports: providers rotate servers
+    // behind their URL, so re-pull each one.
+    _refreshUserSubscriptions();
     _ready = true;
     notifyListeners();
     refreshIp();
@@ -237,8 +242,27 @@ class AppState extends ChangeNotifier {
   /// Swap the managed premium profiles for [fresh], preserving the user's
   /// own profiles and, when possible, the current selection.
   void _applyPremiumProfiles(List<ProxyProfile> fresh) {
+    _applyMerged(mergePremiumProfiles(_profiles, fresh));
+  }
+
+  // --- User subscriptions --------------------------------------------------
+
+  /// On launch: re-pull every subscription URL the user has imported and swap
+  /// in the fresh server lists (providers rotate servers behind their URL).
+  /// A transient failure keeps the current servers; only a definitive 404/410
+  /// clears a group, since the provider retired that link.
+  Future<void> _refreshUserSubscriptions() async {
+    for (final url in userSubUrls(_profiles)) {
+      final fresh = await _userSubs.fetch(url);
+      if (fresh == null) continue; // transient failure: keep what we have
+      _applyMerged(mergeUserSubProfiles(_profiles, url, fresh));
+    }
+  }
+
+  /// Replace the profile list with [merged], preserving the current selection
+  /// when its profile survived the merge.
+  void _applyMerged(List<ProxyProfile> merged) {
     final sel = selected;
-    final merged = mergePremiumProfiles(_profiles, fresh);
     _profiles
       ..clear()
       ..addAll(merged);
