@@ -18,11 +18,14 @@ import 'onboarding_screen.dart';
 import 'paywall_screen.dart';
 import 'settings_screen.dart';
 
-/// Whether the "get access from hideip.net" plans flow is offered anywhere.
-/// iOS first: the StoreKit products exist there. Android follows once the
-/// Play Billing catalog is live; until then it keeps the BYO-only story, so
-/// the app never advertises something it cannot do yet.
-final bool kPlansAvailable = defaultTargetPlatform == TargetPlatform.iOS;
+/// Whether the "get access from hideip.net" plans flow can exist on this
+/// platform at all. Both stores ship it (StoreKit on iOS, Play Billing on
+/// Android). This is only the build-time floor; whether any paywall entry
+/// point actually renders is a further runtime check on the live catalog
+/// (see [AppState.plansOffered]), so the app never advertises a purchase it
+/// cannot complete, e.g. before the store products exist.
+final bool kPlansAvailable = defaultTargetPlatform == TargetPlatform.iOS ||
+    defaultTargetPlatform == TargetPlatform.android;
 
 enum HipScreen {
   onboarding,

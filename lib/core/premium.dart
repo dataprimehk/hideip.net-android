@@ -30,6 +30,62 @@ class PremiumProducts {
       };
 }
 
+/// The signed proof of a store purchase the provisioning backend re-validates
+/// server-side, tagged with the store it came from. iOS carries the StoreKit 2
+/// [jws]; Android carries the Play [purchaseToken]. [productId] identifies the
+/// plan on both. Persisted as JSON so a provision that failed offline can be
+/// retried on a later launch (see [PremiumSub]).
+class PurchasePayload {
+  final String platform; // 'ios' | 'android'
+  final String? jws; // iOS: StoreKit 2 signed transaction
+  final String? purchaseToken; // Android: Play purchase token
+  final String productId;
+
+  const PurchasePayload({
+    required this.platform,
+    required this.productId,
+    this.jws,
+    this.purchaseToken,
+  });
+
+  const PurchasePayload.ios({required String jws, required String productId})
+      : this(platform: 'ios', jws: jws, productId: productId);
+
+  const PurchasePayload.android(
+      {required String purchaseToken, required String productId})
+      : this(
+            platform: 'android',
+            purchaseToken: purchaseToken,
+            productId: productId);
+
+  Map<String, dynamic> toJson() => {
+        'platform': platform,
+        if (jws != null) 'jws': jws,
+        if (purchaseToken != null) 'purchaseToken': purchaseToken,
+        'productId': productId,
+      };
+
+  /// Parse a persisted payload. A legacy record is a bare JWS string (iOS was
+  /// the only store when the field was written); treat it as an iOS payload so
+  /// existing subscribers keep re-provisioning across the upgrade. The product
+  /// id is unknown for those, but the backend derives the plan from the JWS.
+  static PurchasePayload? tryParse(String raw) {
+    if (raw.isEmpty) return null;
+    try {
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      return PurchasePayload(
+        platform: map['platform'] as String? ?? 'ios',
+        jws: map['jws'] as String?,
+        purchaseToken: map['purchaseToken'] as String?,
+        productId: map['productId'] as String? ?? '',
+      );
+    } catch (_) {
+      // Not JSON: a legacy bare-JWS record from the iOS-only era.
+      return PurchasePayload.ios(jws: raw, productId: '');
+    }
+  }
+}
+
 /// Display data for the two variants of the single Premium plan. Prices are
 /// USD fallbacks for when the store catalog has not loaded (yet); live,
 /// locale-priced values come through [withPrice].

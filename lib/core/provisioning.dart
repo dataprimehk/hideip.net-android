@@ -4,13 +4,14 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_version.dart';
+import 'premium.dart';
 import 'proxy_profile.dart';
 import 'subscription.dart';
 
 /// Exchanges a verified store purchase for tunnel credentials on hideip.net
-/// servers. Anonymous by design: the signed transaction is the only
-/// identifier the backend ever sees; it re-validates the signature against
-/// Apple before issuing anything.
+/// servers. Anonymous by design: the signed proof is the only identifier the
+/// backend ever sees; it re-validates the proof against Apple (iOS JWS) or
+/// Google (Android purchase token) before issuing anything.
 class ProvisioningService {
   static const String endpoint = 'https://api.hideip.net:8444';
 
@@ -18,15 +19,17 @@ class ProvisioningService {
   ProvisioningService({http.Client? client})
       : _client = client ?? http.Client();
 
-  /// Send the signed transaction; returns the subscription URL the profiles
-  /// live at, or null when the backend rejected or was unreachable.
-  Future<String?> provision(String jws) async {
+  /// Send the signed purchase proof; returns the subscription URL the profiles
+  /// live at, or null when the backend rejected or was unreachable. The body
+  /// is per-store: iOS keeps `{platform: ios, jws}`; Android sends
+  /// `{platform: android, purchase_token, product_id}`.
+  Future<String?> provision(PurchasePayload payload) async {
     try {
       final resp = await _client
           .post(
             Uri.parse('$endpoint/v1/provision'),
             headers: {'content-type': 'application/json'},
-            body: jsonEncode({'platform': 'ios', 'jws': jws}),
+            body: jsonEncode(provisionBody(payload)),
           )
           .timeout(const Duration(seconds: 20));
       if (resp.statusCode != 200) return null;
@@ -61,6 +64,18 @@ class ProvisioningService {
   }
 }
 
+/// The `/v1/provision` request body for [payload], per the client/backend
+/// contract. iOS is unchanged from the JWS-only era (`{platform, jws}`);
+/// Android sends the Play token under snake_case keys the backend expects.
+Map<String, dynamic> provisionBody(PurchasePayload payload) =>
+    payload.platform == 'android'
+        ? {
+            'platform': 'android',
+            'purchase_token': payload.purchaseToken,
+            'product_id': payload.productId,
+          }
+        : {'platform': 'ios', 'jws': payload.jws};
+
 /// Replace the premium-managed profiles inside [current] with [fresh],
 /// leaving every user-imported profile untouched and in place.
 List<ProxyProfile> mergePremiumProfiles(
@@ -73,11 +88,14 @@ List<ProxyProfile> mergePremiumProfiles(
 bool isPremiumProfile(ProxyProfile p) => p.premium;
 
 /// Persisted pointers for the premium subscription: the subscription URL the
-/// backend issued, and the latest signed transaction (kept so a provision
+/// backend issued, and the latest signed purchase proof (kept so a provision
 /// that failed offline can be retried on a later launch).
 class PremiumSub {
   static const _kUrl = 'premium_sub_url_v1';
-  static const _kJws = 'premium_jws_v1';
+  // The key predates Android support; the value is now a [PurchasePayload]
+  // JSON blob, but a legacy iOS record is a bare JWS string that
+  // [PurchasePayload.tryParse] migrates in place.
+  static const _kProof = 'premium_jws_v1';
 
   static Future<String?> url() async =>
       (await SharedPreferences.getInstance()).getString(_kUrl);
@@ -85,15 +103,19 @@ class PremiumSub {
   static Future<void> saveUrl(String url) async =>
       (await SharedPreferences.getInstance()).setString(_kUrl, url);
 
-  static Future<String?> jws() async =>
-      (await SharedPreferences.getInstance()).getString(_kJws);
+  /// The persisted purchase proof, migrating a legacy bare-JWS record.
+  static Future<PurchasePayload?> proof() async {
+    final raw = (await SharedPreferences.getInstance()).getString(_kProof);
+    return raw == null ? null : PurchasePayload.tryParse(raw);
+  }
 
-  static Future<void> saveJws(String jws) async =>
-      (await SharedPreferences.getInstance()).setString(_kJws, jws);
+  static Future<void> saveProof(PurchasePayload payload) async =>
+      (await SharedPreferences.getInstance())
+          .setString(_kProof, jsonEncode(payload.toJson()));
 
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kUrl);
-    await prefs.remove(_kJws);
+    await prefs.remove(_kProof);
   }
 }

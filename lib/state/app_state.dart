@@ -144,23 +144,28 @@ class AppState extends ChangeNotifier {
         ' renews=${_premium.renews} now=${DateTime.now()}');
     // The store is the source of truth: every entitlement it reports (a
     // purchase, a restore, a renewal from a previous session) lands here.
-    _purchases.init(onPremium: (p, jws) {
-      // The store replays past transactions in arbitrary order (a stale
-      // renewal can land right after the newest one); an entitlement only
-      // ever moves forward. Plan changes are safe under this rule: in a
-      // subscription group the replacing transaction always starts at or
-      // after the old one's period end.
-      final held = _premium.renews;
-      if (held != null && p.renews != null && p.renews!.isBefore(held)) {
-        return;
-      }
-      _premium = p;
-      notifyListeners();
-      p.save();
-      // Every live entitlement re-provisions: a first purchase creates the
-      // server profile, a renewal extends its lifetime server-side.
-      if (p.isOn && jws != null) _provisionPremium(jws);
-    });
+    _purchases.init(
+      onPremium: (p, proof) {
+        // The store replays past transactions in arbitrary order (a stale
+        // renewal can land right after the newest one); an entitlement only
+        // ever moves forward. Plan changes are safe under this rule: in a
+        // subscription group the replacing transaction always starts at or
+        // after the old one's period end.
+        final held = _premium.renews;
+        if (held != null && p.renews != null && p.renews!.isBefore(held)) {
+          return;
+        }
+        _premium = p;
+        notifyListeners();
+        p.save();
+        // Every live entitlement re-provisions: a first purchase creates the
+        // server profile, a renewal extends its lifetime server-side.
+        if (p.isOn && proof != null) _provisionPremium(proof);
+      },
+      // The catalog loads asynchronously; the paywall entry points are gated
+      // on availability, so a rebuild has to follow when it flips.
+      onAvailability: notifyListeners,
+    );
     _profiles.addAll(await ProfileStore.load());
     _subInfos.addAll(await SubInfoStore.load());
     final savedIdx = await ProfileStore.loadSelectedIndex();
@@ -192,6 +197,14 @@ class AppState extends ChangeNotifier {
   /// the store's message for a failed purchase).
   PurchaseService get purchases => _purchases;
 
+  /// Whether to show any in-app plans entry point right now. True once the
+  /// store catalog is confirmed purchasable, or whenever the user already has
+  /// a subscription (their Premium status stays reachable even if the catalog
+  /// is momentarily unavailable). False keeps every paywall entry point hidden
+  /// so the app never advertises a purchase it cannot complete, e.g. before
+  /// the Play products exist. Gated further by [kPlansAvailable] at each site.
+  bool get plansOffered => _purchases.available || premium.isOn;
+
   /// [PlanInfo] for [plan] with the store's localized price once the catalog
   /// has loaded; before that the USD fallback.
   PlanInfo planInfo(PremiumPlan plan) {
@@ -211,12 +224,12 @@ class AppState extends ChangeNotifier {
     showToast(restored ? 'Purchases restored' : 'No purchases to restore');
   }
 
-  /// Exchange the signed transaction for tunnel credentials and pull the
+  /// Exchange the signed purchase proof for tunnel credentials and pull the
   /// premium profiles in. Every step is retried on the next launch (or the
   /// next store event) if it fails here, so errors stay silent.
-  Future<void> _provisionPremium(String jws) async {
-    await PremiumSub.saveJws(jws);
-    final url = await _provisioning.provision(jws);
+  Future<void> _provisionPremium(PurchasePayload proof) async {
+    await PremiumSub.saveProof(proof);
+    final url = await _provisioning.provision(proof);
     if (url == null) return;
     await PremiumSub.saveUrl(url);
     final fresh = await _provisioning.fetchProfiles(url);
@@ -241,8 +254,8 @@ class AppState extends ChangeNotifier {
     }
     final url = await PremiumSub.url();
     if (url == null) {
-      final jws = await PremiumSub.jws();
-      if (jws != null) await _provisionPremium(jws);
+      final proof = await PremiumSub.proof();
+      if (proof != null) await _provisionPremium(proof);
       return;
     }
     final fresh = await _provisioning.fetchProfiles(url);

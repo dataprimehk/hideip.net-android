@@ -45,7 +45,10 @@ class SettingsScreen extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             children: [
-              if (kPlansAvailable) ...[
+              // The Account section rides on the plans catalog being live for
+              // this platform; an existing subscriber keeps it regardless
+              // (plansOffered stays true while premium is on).
+              if (kPlansAvailable && state.plansOffered) ...[
                 const HipSectionLabel('Account'),
                 HipListGroup(children: [
                   HipListRow(

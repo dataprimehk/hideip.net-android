@@ -34,7 +34,8 @@ class PurchaseService {
   StreamSubscription<List<PurchaseDetails>>? _sub;
   final Map<PremiumPlan, ProductDetails> _products = {};
   bool _available = false;
-  void Function(Premium premium, String? jws)? _onPremium;
+  void Function(Premium premium, PurchasePayload? proof)? _onPremium;
+  void Function()? _onAvailability;
   Completer<PurchaseOutcome>? _buyWait;
   bool _restoredAny = false;
   String? _lastError;
@@ -51,12 +52,18 @@ class PurchaseService {
   /// Subscribe to the purchase stream and load the catalog. Safe on every
   /// platform: where the store is missing this quietly leaves [available]
   /// false. [onPremium] fires for every entitlement the store reports,
-  /// including renewals delivered on a later launch, together with the raw
-  /// signed transaction (iOS: the StoreKit 2 JWS) the provisioning backend
-  /// validates server-side.
-  Future<void> init(
-      {required void Function(Premium, String? jws) onPremium}) async {
+  /// including renewals delivered on a later launch, together with the signed
+  /// proof (iOS: the StoreKit 2 JWS; Android: the Play purchase token) the
+  /// provisioning backend validates server-side. [onAvailability] fires once
+  /// the catalog finishes loading (or fails to), so a paywall that was hidden
+  /// while the store was still answering can appear when it turns out to be
+  /// purchasable.
+  Future<void> init({
+    required void Function(Premium, PurchasePayload? proof) onPremium,
+    void Function()? onAvailability,
+  }) async {
     _onPremium = onPremium;
+    _onAvailability = onAvailability;
     // Under flutter_test there is no store channel; registering the platform
     // would only raise async channel errors inside the test zone.
     if (Platform.environment.containsKey('FLUTTER_TEST')) return;
@@ -68,8 +75,12 @@ class PurchaseService {
     } catch (_) {
       _available = false;
     }
-    if (!_available) return;
+    if (!_available) {
+      _onAvailability?.call();
+      return;
+    }
     await _loadCatalog(retries: 3);
+    _onAvailability?.call();
   }
 
   /// Query the store for whatever part of the catalog is still missing.
@@ -171,16 +182,29 @@ class PurchaseService {
             // successful buy/restore: at launch the store replays old,
             // already-lapsed transactions and those must not masquerade as
             // a fresh purchase.
-            _onPremium?.call(
-                premium, p.verificationData.serverVerificationData);
+            _onPremium?.call(premium, _proofFrom(p));
             if (premium.isOn) {
               if (p.status == PurchaseStatus.restored) _restoredAny = true;
               _finishBuy(PurchaseOutcome.success);
             }
           }
       }
+      // Mandatory acknowledge: on Android an un-acknowledged purchase is
+      // auto-refunded by Google after three days; on iOS this finishes the
+      // transaction so it stops replaying. Fires for every terminal status.
       if (p.pendingCompletePurchase) _iap.completePurchase(p);
     }
+  }
+
+  /// The signed proof for [p], tagged with the store it came from. On iOS the
+  /// verification data is the StoreKit 2 JWS; on Android it is the Play
+  /// purchase token. Both go to the provisioning backend, which re-validates
+  /// server-side before issuing any access.
+  PurchasePayload _proofFrom(PurchaseDetails p) {
+    final data = p.verificationData.serverVerificationData;
+    return Platform.isAndroid
+        ? PurchasePayload.android(purchaseToken: data, productId: p.productID)
+        : PurchasePayload.ios(jws: data, productId: p.productID);
   }
 
   void _finishBuy(PurchaseOutcome outcome) {

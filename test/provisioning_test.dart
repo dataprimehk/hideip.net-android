@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hideip_vpn/core/premium.dart';
 import 'package:hideip_vpn/core/provisioning.dart';
 import 'package:hideip_vpn/core/proxy_profile.dart';
 
@@ -39,5 +42,59 @@ void main() {
     final current = [_p('Frankfurt', premium: true), _p('my server')];
     final merged = mergePremiumProfiles(current, const []);
     expect(merged.map((p) => p.name).toList(), ['my server']);
+  });
+
+  group('PurchasePayload', () {
+    test('android payload round-trips through JSON', () {
+      const p = PurchasePayload.android(
+          purchaseToken: 'tok-123', productId: PremiumProducts.monthly);
+      final back = PurchasePayload.tryParse(jsonEncode(p.toJson()))!;
+      expect(back.platform, 'android');
+      expect(back.purchaseToken, 'tok-123');
+      expect(back.jws, isNull);
+      expect(back.productId, PremiumProducts.monthly);
+    });
+
+    test('ios payload round-trips through JSON', () {
+      const p =
+          PurchasePayload.ios(jws: 'a.b.c', productId: PremiumProducts.yearly);
+      final back = PurchasePayload.tryParse(jsonEncode(p.toJson()))!;
+      expect(back.platform, 'ios');
+      expect(back.jws, 'a.b.c');
+      expect(back.purchaseToken, isNull);
+      expect(back.productId, PremiumProducts.yearly);
+    });
+
+    test('legacy bare-JWS record migrates to an iOS payload', () {
+      // Pre-Android persisted value: a raw StoreKit JWS, no JSON wrapper.
+      final back = PurchasePayload.tryParse('header.payload.sig')!;
+      expect(back.platform, 'ios');
+      expect(back.jws, 'header.payload.sig');
+      expect(back.purchaseToken, isNull);
+      expect(back.productId, '');
+    });
+
+    test('empty persisted value parses to null', () {
+      expect(PurchasePayload.tryParse(''), isNull);
+    });
+  });
+
+  group('provisionBody', () {
+    test('android body uses snake_case token and product id', () {
+      const p = PurchasePayload.android(
+          purchaseToken: 'tok-xyz', productId: PremiumProducts.yearly);
+      expect(provisionBody(p), {
+        'platform': 'android',
+        'purchase_token': 'tok-xyz',
+        'product_id': PremiumProducts.yearly,
+      });
+    });
+
+    test('ios body is unchanged from the JWS-only contract', () {
+      const p =
+          PurchasePayload.ios(jws: 'a.b.c', productId: PremiumProducts.monthly);
+      // iOS keeps exactly {platform, jws}: no product id, no token.
+      expect(provisionBody(p), {'platform': 'ios', 'jws': 'a.b.c'});
+    });
   });
 }

@@ -129,9 +129,10 @@ class LocationsScreen extends StatelessWidget {
                 ),
               ]),
               // The whole Premium section rides on the plans catalog being
-              // live for this platform; hasSub keeps an existing subscriber's
-              // servers visible regardless.
-              if (kPlansAvailable || hasSub) ...[
+              // live for this platform and confirmed purchasable; an existing
+              // subscriber keeps their servers visible regardless (plansOffered
+              // stays true while premium is on, and hasSub mirrors it here).
+              if ((kPlansAvailable && state.plansOffered) || hasSub) ...[
                 const _PremiumSectionHead(),
                 if (hasSub && premiumLocs.isNotEmpty)
                   HipListGroup(children: [

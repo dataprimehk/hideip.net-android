@@ -57,6 +57,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final pad = MediaQuery.paddingOf(context);
+    // The in-app plans pitch only where the catalog is live (both the platform
+    // floor and the runtime availability): before the store products exist the
+    // onboarding tells the BYO-only story instead of a dead purchase path.
+    final plans = kPlansAvailable && widget.state.plansOffered;
     return Container(
       color: Hip.dark,
       padding: EdgeInsets.only(top: pad.top, bottom: pad.bottom),
@@ -80,13 +84,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         2 => _page(
             lit: 3,
-            title: kPlansAvailable
-                ? 'Access,\ntwo ways.'
-                : 'Works with\nany provider.',
+            title: plans ? 'Access,\ntwo ways.' : 'Works with\nany provider.',
             bodyWidget: Column(children: [
               const SizedBox(height: 6),
-              // The in-app plans pitch only where the catalog is live.
-              if (kPlansAvailable) ...[
+              if (plans) ...[
                 _way(Icons.shield_outlined, 'Buy access in the app',
                     'Pick a plan from hideip.net and connect instantly'),
                 Container(
@@ -94,7 +95,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ],
               _way(
                   Icons.link,
-                  kPlansAvailable ? 'Or bring your own' : 'Bring your own',
+                  plans ? 'Or bring your own' : 'Bring your own',
                   'Paste a vless:// or vmess:// link, a subscription URL, or scan a QR, from any provider'),
             ]),
             cta: HipCta('Next', onTap: () => setState(() => _step = 3)),
@@ -239,6 +240,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   Widget _choice() {
+    final plans = kPlansAvailable && widget.state.plansOffered;
     return Column(children: [
       SizedBox(
         height: 46,
@@ -266,7 +268,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 style: Hip.sans(400, 14,
                     color: Colors.white.withValues(alpha: .55), height: 1.5)),
             const SizedBox(height: 18),
-            if (kPlansAvailable)
+            if (plans)
               _opt(
                   Icons.shield_outlined,
                   'Get access from hideip.net',
