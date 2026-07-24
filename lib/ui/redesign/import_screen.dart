@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../../core/app_version.dart';
 import '../../core/haptics.dart';
 import '../../core/location.dart';
 import '../../core/ping.dart';
@@ -138,7 +139,7 @@ class _ImportScreenState extends State<ImportScreen> {
       List<ProxyProfile> profiles;
       if (isSub && input.startsWith(RegExp(r'https?://', caseSensitive: false))) {
         final res = await http
-            .get(Uri.parse(input))
+            .get(Uri.parse(input), headers: subscriptionHeaders)
             .timeout(const Duration(seconds: 12));
         if (res.statusCode != 200) {
           throw 'The subscription server answered ${res.statusCode}.';

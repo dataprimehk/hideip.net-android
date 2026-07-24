@@ -1,5 +1,6 @@
 import 'package:http/http.dart' as http;
 
+import 'app_version.dart';
 import 'proxy_profile.dart';
 import 'subscription.dart';
 
@@ -22,7 +23,7 @@ class UserSubscriptionService {
   Future<List<ProxyProfile>?> fetch(String url) async {
     try {
       final resp = await _client
-          .get(Uri.parse(url))
+          .get(Uri.parse(url), headers: subscriptionHeaders)
           .timeout(const Duration(seconds: 20));
       if (resp.statusCode == 404 || resp.statusCode == 410) return const [];
       if (resp.statusCode != 200) return null;

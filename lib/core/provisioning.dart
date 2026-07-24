@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_version.dart';
 import 'proxy_profile.dart';
 import 'subscription.dart';
 
@@ -43,7 +44,7 @@ class ProvisioningService {
   Future<List<ProxyProfile>?> fetchProfiles(String subscriptionUrl) async {
     try {
       final resp = await _client
-          .get(Uri.parse(subscriptionUrl))
+          .get(Uri.parse(subscriptionUrl), headers: subscriptionHeaders)
           .timeout(const Duration(seconds: 20));
       if (resp.statusCode == 404 || resp.statusCode == 410) return const [];
       if (resp.statusCode != 200) return null;
