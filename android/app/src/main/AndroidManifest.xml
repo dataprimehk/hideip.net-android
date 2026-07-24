@@ -33,6 +33,15 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Custom URL scheme so proxy sellers can put an "Open in hideip"
+                 button on their panels: hideip://import/... and
+                 hideip://install-config?url=... both route into the importer. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="hideip"/>
+            </intent-filter>
         </activity>
         <service
             android:name=".HideipVpnService"

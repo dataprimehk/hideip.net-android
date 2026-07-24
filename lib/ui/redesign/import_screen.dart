@@ -29,11 +29,17 @@ class ImportScreen extends StatefulWidget {
   /// The screen a back gesture from the input phase returns to; the shell
   /// remembers where the importer was opened from.
   final HipScreen exitTo;
+
+  /// Text to prefill the input with, e.g. from a `hideip://` deep link. The
+  /// screen still shows the detected preview and waits for the user to tap
+  /// Import; it never auto-imports.
+  final String? initialText;
   const ImportScreen({
     super.key,
     required this.state,
     required this.nav,
     this.exitTo = HipScreen.home,
+    this.initialText,
   });
 
   @override
@@ -60,6 +66,12 @@ class _ImportScreenState extends State<ImportScreen> {
   void initState() {
     super.initState();
     _text.addListener(() => setState(() => _error = null));
+    // A deep link (or any caller) can hand us text to prefill. We surface the
+    // detection preview but never auto-run the import: the user still taps
+    // Import so they see exactly what a link is about to add.
+    if (widget.initialText != null && widget.initialText!.isNotEmpty) {
+      _text.text = widget.initialText!;
+    }
   }
 
   @override

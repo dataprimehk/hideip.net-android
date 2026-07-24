@@ -45,6 +45,10 @@ dependencies:
   # dependency, so it works on GrapheneOS and other no-GMS devices too;
   # mobile_scanner's ML Kit backend returns null without Play Services.
   flutter_zxing: ^2.3.0
+  # Receives hideip:// custom-scheme deep links (initial + stream). On iOS it
+  # hooks the scene lifecycle automatically through FlutterSceneDelegate, so the
+  # empty SceneDelegate this app already ships needs no manual forwarding.
+  app_links: ^7.2.1
   in_app_purchase: ^3.3.0
   url_launcher: ^6.3.2
 

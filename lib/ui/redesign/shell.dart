@@ -1,8 +1,12 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/deep_link.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import 'detail_screen.dart';
@@ -44,6 +48,11 @@ class HipNav {
   /// settings and the paywall).
   final VoidCallback openImport;
 
+  /// Opens the importer with its input prefilled (used by `hideip://` deep
+  /// links). Back returns home. The screen still waits for the user to tap
+  /// Import; nothing is auto-imported.
+  final void Function(String text) openImportWith;
+
   /// Opens the paywall remembering where it was launched from, so both back
   /// gestures and a cancelled purchase return there.
   final void Function(HipScreen from) openPaywall;
@@ -58,6 +67,7 @@ class HipNav {
     required this.go,
     required this.openDetail,
     required this.openImport,
+    required this.openImportWith,
     required this.openPaywall,
     required this.claimBack,
     required this.releaseBack,
@@ -81,6 +91,14 @@ class _HipShellState extends State<HipShell>
   HipScreen _paywallFrom = HipScreen.home;
   VoidCallback? _backOverride;
 
+  // Deep-link plumbing. A `hideip://` link parses into text the importer is
+  // prefilled with; while onboarding is still up the link waits here and opens
+  // the importer once the shell settles on a real screen.
+  final AppLinks _appLinks = AppLinks();
+  StreamSubscription<Uri>? _linkSub;
+  String? _importInitialText; // consumed by the next import build
+  String? _pendingLinkText; // held until the shell is past onboarding
+
   // iOS edge-swipe back: with no Navigator stack there is no system gesture,
   // so a drag that starts at the left edge maps onto the same hierarchy the
   // back arrows use. The screen it would return to renders underneath and the
@@ -95,9 +113,54 @@ class _HipShellState extends State<HipShell>
   double _dragExtent = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  @override
   void dispose() {
+    _linkSub?.cancel();
     _swipeCtrl.dispose();
     super.dispose();
+  }
+
+  /// Wires the `hideip://` deep-link sources: the cold-start link (app opened
+  /// by a link) and the warm stream (a link arriving while running). The
+  /// stream also emits the initial link, so we only read the initial link
+  /// explicitly for the cold-start case and let the stream cover the rest.
+  Future<void> _initDeepLinks() async {
+    _linkSub = _appLinks.uriLinkStream.listen(_onDeepLink, onError: (_) {});
+    try {
+      final initial = await _appLinks.getInitialLink();
+      if (initial != null) _onDeepLink(initial);
+    } catch (_) {
+      // No initial link (or no platform side, e.g. tests): nothing to do.
+    }
+  }
+
+  /// Turns a deep link into importer text and routes to the import screen.
+  /// While onboarding is still showing, the text is parked and opened once the
+  /// user reaches a real screen (see [build]). Never auto-imports.
+  void _onDeepLink(Uri uri) {
+    final parsed = parseDeepLink(uri.toString());
+    if (parsed == null) return; // not a hideip import link
+    if (!mounted) return;
+    // Onboarding is a modal flow; land on import only after it finishes.
+    if (_screen == HipScreen.onboarding ||
+        (_screen == null && !widget.state.prefs.onboarded)) {
+      _pendingLinkText = parsed.text;
+      return;
+    }
+    _openImportWith(parsed.text);
+  }
+
+  void _openImportWith(String text) {
+    setState(() {
+      _importInitialText = text;
+      _importFrom = HipScreen.home;
+      _screen = HipScreen.import;
+    });
   }
 
   late final HipNav _nav = HipNav(
@@ -107,9 +170,11 @@ class _HipShellState extends State<HipShell>
       _screen = HipScreen.detail;
     }),
     openImport: () => setState(() {
+      _importInitialText = null;
       _importFrom = _screen ?? HipScreen.home;
       _screen = HipScreen.import;
     }),
+    openImportWith: _openImportWith,
     openPaywall: (from) => setState(() {
       _paywallFrom = from;
       _screen = HipScreen.paywall;
@@ -206,9 +271,13 @@ class _HipShellState extends State<HipShell>
         HipScreen.home => HomeHeroScreen(state: state, nav: _nav),
         HipScreen.locations => LocationsScreen(state: state, nav: _nav),
         HipScreen.import => ImportScreen(
+            // A new deep link while the importer is already open must rebuild
+            // its state so the fresh text prefills; key on the text to force it.
+            key: ValueKey('import:${_importInitialText ?? ''}'),
             state: state,
             nav: _nav,
             exitTo: _importFrom,
+            initialText: _importInitialText,
           ),
         HipScreen.settings => SettingsScreen(state: state, nav: _nav),
         HipScreen.detail =>
@@ -273,6 +342,15 @@ class _HipShellState extends State<HipShell>
         Hip.dm = state.prefs.darkMode;
         _screen ??=
             state.prefs.onboarded ? HipScreen.home : HipScreen.onboarding;
+
+        // A deep link that arrived during onboarding lands on import once the
+        // user finishes and the shell leaves the onboarding screen.
+        if (_pendingLinkText != null && _screen != HipScreen.onboarding) {
+          final text = _pendingLinkText!;
+          _pendingLinkText = null;
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _openImportWith(text));
+        }
 
         final iosSwipe = Theme.of(context).platform == TargetPlatform.iOS;
         final onDark = _screen == HipScreen.onboarding ||
