@@ -23,8 +23,13 @@ class IpLookup {
   static const _endpoint = 'https://api.ipify.org';
   static const _timeout = Duration(seconds: 8);
 
+  /// Store-screenshot override: `--dart-define=HIP_SHOT_IP=198.51.100.23`
+  /// makes the home screen show a documentation IP instead of the real one.
+  static const _shotIp = String.fromEnvironment('HIP_SHOT_IP');
+
   /// Returns the public IP string, or null on any failure (no network, timeout).
   static Future<String?> current() async {
+    if (_shotIp.isNotEmpty) return _shotIp;
     try {
       final res = await http.get(Uri.parse(_endpoint)).timeout(_timeout);
       if (res.statusCode != 200) return null;
@@ -63,6 +68,9 @@ class IpLookup {
   /// any failure. Only meaningful while the tunnel is down: with it up, the
   /// public IP geolocates to the exit node, not to the user.
   static Future<IpGeo?> locate() async {
+    if (_shotIp.isNotEmpty) {
+      return const IpGeo(lat: 52.37, lon: 4.9, city: 'Amsterdam');
+    }
     try {
       final res =
           await http.get(Uri.parse('https://ipwho.is/')).timeout(_timeout);
