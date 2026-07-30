@@ -9,7 +9,7 @@ import 'premium.dart';
 /// Store-event logging. On iOS these lines reach the system log (os_log) in
 /// release builds too, which is the only way to watch a sandbox purchase on a
 /// device where a debugger cannot attach. Nothing sensitive is logged.
-const bool kIapLog = false;
+const bool kIapLog = bool.fromEnvironment('HIP_IAP_LOG');
 
 void iapLog(String message) {
   // ignore: avoid_print
@@ -45,6 +45,18 @@ class PurchaseService {
 
   /// The store's human message for the last failed purchase, if any.
   String? get lastError => _lastError;
+
+  /// One short human-readable line for the error banner. Platform exceptions
+  /// stringify with a full native stack trace; users never see that.
+  static String _shortError(Object e) {
+    var s = '$e';
+    const marker = 'Stacktrace:';
+    final cut = s.indexOf(marker);
+    if (cut > 0) s = s.substring(0, cut);
+    s = s.split('\n').first.replaceAll(RegExp(r'\(+$'), '').trim();
+    if (s.length > 140) s = '${s.substring(0, 140)}…';
+    return s;
+  }
 
   /// Store-localized price for [plan], or null before the catalog loads.
   String? priceOf(PremiumPlan plan) => _products[plan]?.price;
@@ -134,7 +146,8 @@ class PurchaseService {
       await _iap.buyNonConsumable(
           purchaseParam: PurchaseParam(productDetails: product));
     } catch (e) {
-      _lastError = '$e';
+      iapLog('[iap] buy threw: $e');
+      _lastError = _shortError(e);
       if (!wait.isCompleted) wait.complete(PurchaseOutcome.failed);
     }
     // The sheet can be abandoned in states some platforms never report;
@@ -151,7 +164,8 @@ class PurchaseService {
     try {
       await _iap.restorePurchases();
     } catch (e) {
-      _lastError = '$e';
+      iapLog('[iap] restore threw: $e');
+      _lastError = _shortError(e);
       return false;
     }
     // Restored purchases arrive on the stream after the call returns.
@@ -170,7 +184,8 @@ class PurchaseService {
         case PurchaseStatus.canceled:
           _finishBuy(PurchaseOutcome.canceled);
         case PurchaseStatus.error:
-          _lastError = p.error?.message;
+          _lastError =
+              p.error == null ? null : _shortError(p.error!.message);
           _finishBuy(PurchaseOutcome.failed);
         case PurchaseStatus.purchased:
         case PurchaseStatus.restored:
