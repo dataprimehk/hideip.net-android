@@ -115,6 +115,26 @@ class SettingsScreen extends StatelessWidget {
                     },
                   ),
                 ),
+                // Speed mode only makes sense with a subscription behind it:
+                // WireGuard runs on the hideip.net fleet, not on a user's own
+                // imported servers.
+                if (premium.isOn)
+                  HipListRow(
+                    title: 'Speed mode',
+                    subtitle: state.speedDeviceLimit
+                        ? 'Already set up on 5 devices; turn it off on one of them'
+                        : 'WireGuard where the network allows it',
+                    trailing: HipToggle(
+                      on: prefs.speedMode,
+                      onChanged: (v) async {
+                        await state.setSpeedMode(v);
+                        if (v && state.isConnected) {
+                          state.showToast(
+                              'Applies from the next connection');
+                        }
+                      },
+                    ),
+                  ),
                 if (defaultTargetPlatform == TargetPlatform.android)
                   _AndroidAlwaysOnRows(state: state),
               ]),

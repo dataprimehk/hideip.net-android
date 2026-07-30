@@ -8,9 +8,15 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
+    <!-- Backups are off on purpose: local storage holds tunnel credentials
+         (subscription pointers, the WireGuard device key), and a restored
+         backup would clone the device identity onto a second phone. -->
     <application
         android:label="hideip.net"
         android:name="${applicationName}"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

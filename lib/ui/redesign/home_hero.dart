@@ -247,6 +247,10 @@ class _HomeHeroScreenState extends State<HomeHeroScreen> {
                       style: Hip.sans(400, 13.5,
                           color: Colors.white.withValues(alpha: .55))),
                 ),
+                // Which path the tunnel took ("speed mode" / "stealth
+                // fallback"). Deliberately quiet: falling back is the app
+                // working as designed, not something to alarm anyone with.
+                _SpeedLine(label: state.speedStatus),
                 const SizedBox(height: 18),
                 _IpLine(state: state, protectedNow: on),
                 const SizedBox(height: 16),
@@ -524,6 +528,34 @@ class _HomeList extends StatelessWidget {
 }
 
 /// "Current IP  185.130.47.77  EXPOSED/Protected" pill on the hero panel.
+/// The Speed mode status line under the hero subtitle. Absent (zero height)
+/// whenever there is nothing worth saying, so the layout is unchanged for
+/// everyone not using Speed mode.
+class _SpeedLine extends StatelessWidget {
+  final String? label;
+  const _SpeedLine({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = label;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 320),
+      child: text == null
+          ? const SizedBox(width: double.infinity, key: ValueKey('none'))
+          : Padding(
+              key: ValueKey(text),
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                text,
+                style: Hip.mono(500, 11,
+                    color: Colors.white.withValues(alpha: .38),
+                    letterSpacing: .3),
+              ),
+            ),
+    );
+  }
+}
+
 class _IpLine extends StatelessWidget {
   final AppState state;
   final bool protectedNow;

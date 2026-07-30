@@ -11,6 +11,7 @@ class UiPrefs {
   static const _kHomeMap = 'ui_homemap_v1';
   static const _kAlwaysOn = 'ui_alwayson_v1';
   static const _kKillSwitch = 'ui_killswitch_v1';
+  static const _kSpeedMode = 'ui_speedmode_v1';
 
   final bool advanced;
   final bool onboarded;
@@ -26,6 +27,11 @@ class UiPrefs {
   // when the core dies; iOS: on-demand rules (the system redials itself).
   final bool killSwitch;
 
+  // Speed mode: use WireGuard instead of the stealth protocol where the
+  // network allows it. Off by default, because stealth is the promise the app
+  // is built on and WireGuard is the optional upgrade on top of it.
+  final bool speedMode;
+
   const UiPrefs({
     this.advanced = false,
     this.onboarded = false,
@@ -35,6 +41,7 @@ class UiPrefs {
     this.homeMap = false,
     this.alwaysOn = false,
     this.killSwitch = false,
+    this.speedMode = false,
   });
 
   UiPrefs copyWith({
@@ -46,6 +53,7 @@ class UiPrefs {
     bool? homeMap,
     bool? alwaysOn,
     bool? killSwitch,
+    bool? speedMode,
   }) =>
       UiPrefs(
         advanced: advanced ?? this.advanced,
@@ -56,6 +64,7 @@ class UiPrefs {
         homeMap: homeMap ?? this.homeMap,
         alwaysOn: alwaysOn ?? this.alwaysOn,
         killSwitch: killSwitch ?? this.killSwitch,
+        speedMode: speedMode ?? this.speedMode,
       );
 
   static Future<UiPrefs> load() async {
@@ -69,6 +78,7 @@ class UiPrefs {
       homeMap: p.getBool(_kHomeMap) ?? false,
       alwaysOn: p.getBool(_kAlwaysOn) ?? false,
       killSwitch: p.getBool(_kKillSwitch) ?? false,
+      speedMode: p.getBool(_kSpeedMode) ?? false,
     );
   }
 
@@ -82,5 +92,6 @@ class UiPrefs {
     await p.setBool(_kHomeMap, homeMap);
     await p.setBool(_kAlwaysOn, alwaysOn);
     await p.setBool(_kKillSwitch, killSwitch);
+    await p.setBool(_kSpeedMode, speedMode);
   }
 }

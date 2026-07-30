@@ -18,6 +18,11 @@ import '../core/sub_info.dart';
 import '../core/subscription.dart';
 import '../core/ui_prefs.dart';
 import '../core/user_subscription.dart';
+import '../core/wg_keys.dart';
+import '../core/wg_profile.dart';
+import '../core/wg_register.dart';
+import '../core/wg_singbox.dart';
+import '../core/wg_speed_mode.dart';
 import '../vpn_controller.dart';
 
 enum ConnState { disconnected, connecting, connected, error }
@@ -49,6 +54,19 @@ class AppState extends ChangeNotifier {
   String? _toast;
   Timer? _toastTimer;
   bool _ready = false;
+
+  // --- Speed mode (WireGuard) ---------------------------------------------
+  final WgRegisterService _wg = WgRegisterService();
+  WgProfile? _wgProfile;
+  // Networks WireGuard could not hand shake on; in-memory only, so every
+  // launch re-tests and a network that stops blocking recovers by itself.
+  final WgHandshakeMemory _wgBlocked = WgHandshakeMemory();
+  TunnelPath _path = TunnelPath.stealth;
+  SpeedFallbackReason _fallback = SpeedFallbackReason.off;
+  bool _wgDeviceLimit = false;
+  // Guards the probe so a disconnect (or a second connect) mid-window cannot
+  // have a late probe tear down a tunnel it no longer owns.
+  int _connectGeneration = 0;
 
   List<ProxyProfile> get profiles => List.unmodifiable(_profiles);
   int get selectedIndex => _selected;
@@ -95,6 +113,19 @@ class AppState extends ChangeNotifier {
 
   /// True once [init] has loaded persisted state (gates the first frame).
   bool get ready => _ready;
+
+  /// Which path the live tunnel is taking.
+  TunnelPath get tunnelPath => _path;
+
+  /// Why Speed mode is not carrying the traffic right now.
+  SpeedFallbackReason get speedFallback => _fallback;
+
+  /// The quiet status line for the home screen ("speed mode" /
+  /// "stealth fallback"), or null when there is nothing to say.
+  String? get speedStatus => isConnected ? speedStatusLine(_path, _fallback) : null;
+
+  /// Whether the subscription has already used its five WireGuard slots.
+  bool get speedDeviceLimit => _wgDeviceLimit;
 
   /// Display-friendly view over [profiles], in the same order.
   List<Location> get locations => Location.deriveAll(_profiles);
@@ -244,6 +275,92 @@ class AppState extends ChangeNotifier {
       if (epoch != null) await PremiumSub.saveCatalogEpoch(epoch);
       iapLog('[iap] provisioned: ${fresh.length} profile(s)');
     }
+    await _refreshWireGuard(url);
+  }
+
+  // --- Speed mode (WireGuard) ---------------------------------------------
+
+  /// Register this device's WireGuard public key and cache the profile.
+  ///
+  /// Idempotent by contract, so it runs on every subscription refresh: that is
+  /// what keeps the peer present on servers added to the fleet since last time.
+  /// Only runs while Speed mode is on, so a user who never turns it on never
+  /// generates a key and never has a peer registered anywhere.
+  Future<void> _refreshWireGuard(String? subscriptionUrl) async {
+    if (!_prefs.speedMode) return;
+    if (!premium.isOn) return;
+    final token = subTokenFromUrl(subscriptionUrl ?? await PremiumSub.url());
+    if (token == null) return;
+    // First use generates the keypair; later calls reuse it.
+    final keys = await WgIdentity.ensure();
+    final result =
+        await _wg.register(subToken: token, publicKey: keys.publicKey);
+    switch (result.status) {
+      case WgRegisterStatus.ok:
+        _wgProfile = result.profile;
+        _wgDeviceLimit = false;
+        await WgProfileStore.save(result.profile!);
+        notifyListeners();
+      case WgRegisterStatus.deviceLimit:
+        _wgDeviceLimit = true;
+        _wgProfile = null;
+        await WgProfileStore.clear();
+        notifyListeners();
+      case WgRegisterStatus.gone:
+        // The subscription is finished; the premium refresh path clears the
+        // rest of its state, so just let go of the WireGuard half here.
+        await _forgetWireGuard();
+      case WgRegisterStatus.badKey:
+        // Should not happen: the key was generated and validated locally.
+        // Start over with a fresh identity so the next refresh can recover.
+        await WgIdentity.clear();
+        await _forgetWireGuard();
+      case WgRegisterStatus.transient:
+        // Keep whatever is cached; retry on the next refresh.
+        break;
+    }
+  }
+
+  /// Drop every trace of the WireGuard profile (not the keypair).
+  Future<void> _forgetWireGuard() async {
+    _wgProfile = null;
+    _wgDeviceLimit = false;
+    await WgProfileStore.clear();
+    notifyListeners();
+  }
+
+  /// Turn Speed mode on or off. Turning it on registers immediately so the
+  /// profile is ready by the time the user next connects; turning it off
+  /// releases the device's peer slot on the backend, which is what lets a
+  /// subscriber move Speed mode to a different device.
+  Future<void> setSpeedMode(bool on) async {
+    await updatePrefs(_prefs.copyWith(speedMode: on));
+    if (on) {
+      _wgDeviceLimit = false;
+      await _refreshWireGuard(null);
+      if (_wgDeviceLimit) {
+        showToast('Speed mode is already set up on 5 devices');
+      }
+    } else {
+      // Best effort: a failed revoke only costs a slot until the
+      // subscription lapses, and must not block the toggle.
+      final token = subTokenFromUrl(await PremiumSub.url());
+      final keys = await WgIdentity.load();
+      if (token != null && keys != null) {
+        final revoked =
+            await _wg.revoke(subToken: token, publicKey: keys.publicKey);
+        // With the slot freed, retire the keypair too, so re-enabling mints a
+        // fresh identity: that is the recovery path for an identity cloned by
+        // a device restore. After a failed revoke the key is kept instead;
+        // reusing it on re-enable is what stops an offline off/on cycle from
+        // burning through the subscription's five slots.
+        if (revoked) await WgIdentity.clear();
+      }
+      await _forgetWireGuard();
+      _path = TunnelPath.stealth;
+      _fallback = SpeedFallbackReason.off;
+      notifyListeners();
+    }
   }
 
   /// On launch: re-fetch premium profiles while the subscription lives (the
@@ -255,6 +372,11 @@ class AppState extends ChangeNotifier {
           _profiles.any(isPremiumProfile)) {
         _applyPremiumProfiles(const []);
         await PremiumSub.clear();
+        // The WireGuard peer goes with it; the backend drops the peers on its
+        // side when the store notification lands, and holding a stale profile
+        // here would only produce a tunnel that cannot hand shake.
+        await _forgetWireGuard();
+        await WgIdentity.clear();
         iapLog('[iap] premium lapsed: managed profiles removed');
       }
       return;
@@ -265,6 +387,11 @@ class AppState extends ChangeNotifier {
       if (proof != null) await _provisionPremium(proof);
       return;
     }
+    // Speed mode rides along on the same refresh: the register call is
+    // idempotent, so this is how the peer reaches servers added since the
+    // last launch.
+    _wgProfile = await WgProfileStore.load();
+    await _refreshWireGuard(url);
     final refresh = await _provisioning.refreshProfiles(
       url,
       cachedProfiles: _profiles,
@@ -510,15 +637,39 @@ class AppState extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      final config =
-          SingboxConfig.buildJson(profile, killSwitch: _prefs.killSwitch);
-      await VpnController.start(config, label: profile.name);
+      final generation = ++_connectGeneration;
+      // Speed mode gets first refusal; anything unclear falls through to the
+      // stealth profile below, which is the path that always works.
+      final decision = SpeedModeDecision.decide(
+        enabled: _prefs.speedMode,
+        premium: premium.isOn,
+        profile: _wgProfile,
+        blockedHere: _wgBlocked.isBlocked(_networkId),
+        preferredCountry: activeLocation?.cc,
+        deviceLimited: _wgDeviceLimit,
+      );
+      _fallback = decision.reason;
+      var startedSpeed = false;
+      if (decision.useWireGuard && decision.server != null) {
+        startedSpeed = await _startWireGuard(decision.server!);
+      }
+      if (!startedSpeed) {
+        _path = TunnelPath.stealth;
+        final config =
+            SingboxConfig.buildJson(profile, killSwitch: _prefs.killSwitch);
+        await VpnController.start(config, label: profile.name);
+      }
       _startStatusPoll();
       // Optimistic; the poll will confirm/flip to error.
       _conn = ConnState.connected;
       Haptics.success();
       notifyListeners();
       _refreshIpAfterToggle();
+      // With WireGuard up, watch for the handshake actually completing and
+      // fall back to stealth without user involvement if it never does.
+      if (startedSpeed) {
+        unawaited(_probeWireGuard(generation, profile));
+      }
     } on MissingPluginException {
       // No native VPN side on this platform yet (iOS before the PacketTunnel
       // port). Keep the rest of the app usable; only connecting is off-limits.
@@ -529,6 +680,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    // Invalidate any in-flight WireGuard probe: it must not tear down or
+    // reconnect a tunnel the user has already dismissed.
+    _connectGeneration++;
     try {
       await VpnController.stop();
     } catch (_) {
@@ -537,9 +691,88 @@ class AppState extends ChangeNotifier {
     _statusPoll?.cancel();
     _conn = ConnState.disconnected;
     _error = null;
+    _path = TunnelPath.stealth;
     notifyListeners();
     _refreshIpAfterToggle();
   }
+
+  /// Start the tunnel on WireGuard. Returns false when it could not even be
+  /// started, in which case the caller proceeds with the stealth profile.
+  Future<bool> _startWireGuard(WgServer server) async {
+    final wg = _wgProfile;
+    if (wg == null) return false;
+    final keys = await WgIdentity.load();
+    if (keys == null || !WgSingboxConfig.usableKey(keys.privateKey)) {
+      return false;
+    }
+    try {
+      final config = WgSingboxConfig.buildJson(
+        profile: wg,
+        server: server,
+        privateKey: keys.privateKey,
+        killSwitch: _prefs.killSwitch,
+      );
+      final label = server.label.isEmpty ? server.host : server.label;
+      final ok = await VpnController.start(config, label: label);
+      if (!ok) return false;
+      _path = TunnelPath.speed;
+      _fallback = SpeedFallbackReason.none;
+      return true;
+    } catch (_) {
+      // A core that refuses the WireGuard config must not cost the user their
+      // connection; the stealth path is tried right after.
+      return false;
+    }
+  }
+
+  /// Watch a freshly started WireGuard tunnel for proof that the handshake
+  /// completed, and switch to stealth if it did not.
+  ///
+  /// The signal is the downlink byte counter: a blocked tunnel still sends
+  /// (handshake initiations go out into the void) but never receives, while a
+  /// working one has inbound bytes within a second or two, because the IP
+  /// refresh this connect already kicked off generates traffic. See
+  /// [WgHandshakeMemory] for the full reasoning.
+  Future<void> _probeWireGuard(int generation, ProxyProfile stealth) async {
+    await Future<void>.delayed(WgHandshakeMemory.probeWindow);
+    // A disconnect or another connect happened meanwhile: this probe is stale.
+    if (generation != _connectGeneration) return;
+    if (_path != TunnelPath.speed || _conn != ConnState.connected) return;
+    final stats = await VpnController.stats();
+    if (!WgHandshakeMemory.looksBlocked(downlinkTotal: stats.downlinkTotal)) {
+      _wgBlocked.markWorking(_networkId);
+      return;
+    }
+    if (generation != _connectGeneration) return;
+    // WireGuard is blocked on this network. Remember it so the next connect
+    // here skips the probe entirely, then move to stealth without asking.
+    _wgBlocked.markBlocked(_networkId);
+    _fallback = SpeedFallbackReason.blocked;
+    _path = TunnelPath.stealth;
+    notifyListeners();
+    try {
+      await VpnController.stop();
+      final config =
+          SingboxConfig.buildJson(stealth, killSwitch: _prefs.killSwitch);
+      await VpnController.start(config, label: stealth.name);
+      _startStatusPoll();
+      _conn = ConnState.connected;
+      notifyListeners();
+      _refreshIpAfterToggle();
+    } catch (e) {
+      _setError('Failed to connect: $e');
+    }
+  }
+
+  /// A key for "the network the device is on right now".
+  ///
+  /// The app has no connectivity plugin, and adding one for this alone is not
+  /// worth a native dependency. What it does have is the user's real public IP,
+  /// which [refreshIp] keeps current while disconnected: two different networks
+  /// almost never share one, and a device that moves between networks gets a
+  /// new value. Null (never looked up, or offline) simply means no memory is
+  /// kept, so WireGuard is retried, which is the safe direction.
+  String? get _networkId => _publicIp;
 
   /// Connect/disconnect flips the route table a moment AFTER the platform
   /// call returns (on iOS the extension boots asynchronously), so a single

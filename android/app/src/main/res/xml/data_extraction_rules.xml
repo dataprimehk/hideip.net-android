@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ equivalent of allowBackup="false": nothing leaves the device,
+     neither to cloud backup nor device-to-device transfer. Local storage holds
+     tunnel credentials, and restoring them onto a second phone would clone the
+     WireGuard device identity (two peers, one key, connections kick each other
+     off). A new install re-provisions from the store purchase instead. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="file" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="file" path="." />
+    </device-transfer>
+</data-extraction-rules>
