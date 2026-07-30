@@ -131,8 +131,11 @@ class SettingsScreen extends StatelessWidget {
                   onTap: () => nav.go(HipScreen.onboarding),
                 ),
               ]),
-              const HipSubnote(
-                  'hideip.net · Open source · No logs\nSame app on iOS and Android.'),
+              // Apple guideline 2.3.10: no other-platform mentions on iOS.
+              HipSubnote(defaultTargetPlatform == TargetPlatform.iOS
+                  ? 'hideip.net · Open source · No logs'
+                  : 'hideip.net · Open source · No logs\n'
+                      'Same app on iOS and Android.'),
             ],
           ),
         ),
