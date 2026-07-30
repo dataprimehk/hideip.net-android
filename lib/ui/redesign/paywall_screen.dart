@@ -297,7 +297,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10),
       child: Column(children: [
-        row('Unblock any network', 'stealth by default'),
+        row('Works on filtered networks', 'stealth by default'),
         row('All locations', 'every location included'),
         row('No logs', 'nothing to record or sell'),
         row('No account', 'no email, no login'),
