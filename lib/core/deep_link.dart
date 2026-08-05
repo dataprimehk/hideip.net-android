@@ -35,6 +35,58 @@ class DeepLinkImport {
   String toString() => 'DeepLinkImport(text: $text, name: $name)';
 }
 
+/// A device-link request read off a QR code or an incoming
+/// `hideip://link?v=1&id=<link_id>` deep link. The id is the only thing the QR
+/// carries: it is public by design, and approving it grants access rather than
+/// taking any, so a photographed code gives an attacker nothing.
+class DeepLinkPairing {
+  /// The backend's link id, handed straight back to `/v1/link/approve`.
+  final String linkId;
+
+  const DeepLinkPairing(this.linkId);
+
+  @override
+  bool operator ==(Object other) =>
+      other is DeepLinkPairing && other.linkId == linkId;
+
+  @override
+  int get hashCode => linkId.hashCode;
+
+  @override
+  String toString() => 'DeepLinkPairing(linkId: $linkId)';
+}
+
+/// Turns a `hideip://link?v=1&id=…` string into a [DeepLinkPairing], or null
+/// for anything else (an import link, another scheme, or a link with no id).
+///
+/// Version tolerance: `v` is accepted when absent or `1`. A future version
+/// carries a payload this build cannot be trusted to understand, so it is
+/// refused rather than approved blind.
+DeepLinkPairing? parsePairingLink(String raw) {
+  final input = raw.trim();
+  if (input.isEmpty) return null;
+
+  final uri = Uri.tryParse(input);
+  if (uri == null || uri.scheme.toLowerCase() != 'hideip') return null;
+  if (_action(uri) != 'link') return null;
+
+  final version = uri.queryParameters['v']?.trim();
+  if (version != null && version.isNotEmpty && version != '1') return null;
+
+  final id = uri.queryParameters['id']?.trim() ?? '';
+  if (id.isEmpty) return null;
+  return DeepLinkPairing(id);
+}
+
+/// The action a hideip link names: the host, or the first path segment when a
+/// launcher normalized `hideip://x` down to `hideip:/x`.
+String _action(Uri uri) {
+  final host = uri.host.toLowerCase();
+  if (host.isNotEmpty) return host;
+  final segments = uri.pathSegments;
+  return segments.isNotEmpty ? segments.first.toLowerCase() : '';
+}
+
 /// Turns a `hideip://` deep-link string into a [DeepLinkImport], or returns
 /// null for anything that is not a recognized hideip link or carries no
 /// usable payload.
@@ -48,13 +100,7 @@ DeepLinkImport? parseDeepLink(String raw) {
   // The action is the host or the first path segment, whichever carries it:
   // `hideip://import/...` gives host=import, while some launchers normalize to
   // `hideip:/import/...` giving an empty host and a leading path segment.
-  final host = uri.host.toLowerCase();
-  final segments = uri.pathSegments;
-  final action = host.isNotEmpty
-      ? host
-      : (segments.isNotEmpty ? segments.first.toLowerCase() : '');
-
-  switch (action) {
+  switch (_action(uri)) {
     case 'install-config':
     case 'add':
     case 'import' when uri.hasQuery && (uri.queryParameters['url'] ?? '').isNotEmpty:
