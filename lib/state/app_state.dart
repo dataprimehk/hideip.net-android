@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 
+import '../core/device_link.dart';
 import '../core/haptics.dart';
 import '../core/ip_lookup.dart';
 import '../core/location.dart';
@@ -199,6 +200,7 @@ class AppState extends ChangeNotifier {
     );
     _profiles.addAll(await ProfileStore.load());
     _subInfos.addAll(await SubInfoStore.load());
+    await _loadSubToken();
     final savedIdx = await ProfileStore.loadSelectedIndex();
     if (savedIdx >= 0 && savedIdx < _profiles.length) _selected = savedIdx;
     // Keep the premium server profiles current (or drop them once the
@@ -263,6 +265,8 @@ class AppState extends ChangeNotifier {
     final url = await _provisioning.provision(proof);
     if (url == null) return;
     await PremiumSub.saveUrl(url);
+    // The linked-devices section keys off this token being present.
+    await _loadSubToken();
     final refresh = await _provisioning.refreshProfiles(
       url,
       cachedProfiles: _profiles,
@@ -377,6 +381,7 @@ class AppState extends ChangeNotifier {
         // here would only produce a tunnel that cannot hand shake.
         await _forgetWireGuard();
         await WgIdentity.clear();
+        await _loadSubToken();
         iapLog('[iap] premium lapsed: managed profiles removed');
       }
       return;
@@ -409,6 +414,33 @@ class AppState extends ChangeNotifier {
   /// own profiles and, when possible, the current selection.
   void _applyPremiumProfiles(List<ProxyProfile> fresh) {
     _applyMerged(mergePremiumProfiles(_profiles, fresh));
+  }
+
+  // --- Device linking ------------------------------------------------------
+
+  final DeviceLinkService _deviceLinks = DeviceLinkService();
+
+  /// The `/v1/link/*` client, used by the linked-devices screens.
+  DeviceLinkService get deviceLinks => _deviceLinks;
+
+  /// Whether this phone can hand out access to other devices: it needs a live
+  /// subscription whose provisioned token is on disk. Read once at load and
+  /// again whenever premium changes, so the Settings section can be gated
+  /// without every build hitting storage.
+  bool get canLinkDevices => premium.isOn && _subToken != null;
+  String? _subToken;
+
+  /// The subscription token the link API authenticates with, or null when this
+  /// phone holds no provisioned subscription.
+  String? get subToken => premium.isOn ? _subToken : null;
+
+  /// Re-reads the provisioned subscription token from storage. Cheap and
+  /// idempotent; called on launch and after a provision lands.
+  Future<void> _loadSubToken() async {
+    final next = subTokenOf(await PremiumSub.url());
+    if (next == _subToken) return;
+    _subToken = next;
+    notifyListeners();
   }
 
   // --- User subscriptions --------------------------------------------------

@@ -13,6 +13,7 @@ import 'detail_screen.dart';
 import 'hip.dart';
 import 'home_hero.dart';
 import 'import_screen.dart';
+import 'linked_devices_screen.dart';
 import 'locations_screen.dart';
 import 'onboarding_screen.dart';
 import 'paywall_screen.dart';
@@ -37,6 +38,7 @@ enum HipScreen {
   paywall,
   premium,
   trialExpired,
+  linkedDevices,
 }
 
 /// In-app navigator used by every redesign screen. A tiny state machine (the
@@ -101,6 +103,7 @@ class _HipShellState extends State<HipShell>
   StreamSubscription<Uri>? _linkSub;
   String? _importInitialText; // consumed by the next import build
   String? _pendingLinkText; // held until the shell is past onboarding
+  DeepLinkPairing? _pendingPairing; // same, for a device-link approval
 
   // iOS edge-swipe back: with no Navigator stack there is no system gesture,
   // so a drag that starts at the left edge maps onto the same hierarchy the
@@ -146,16 +149,43 @@ class _HipShellState extends State<HipShell>
   /// While onboarding is still showing, the text is parked and opened once the
   /// user reaches a real screen (see [build]). Never auto-imports.
   void _onDeepLink(Uri uri) {
-    final parsed = parseDeepLink(uri.toString());
-    if (parsed == null) return; // not a hideip import link
     if (!mounted) return;
-    // Onboarding is a modal flow; land on import only after it finishes.
-    if (_screen == HipScreen.onboarding ||
-        (_screen == null && !widget.state.prefs.onboarded)) {
+    final raw = uri.toString();
+    // Onboarding is a modal flow; anything that arrives during it waits.
+    final duringOnboarding = _screen == HipScreen.onboarding ||
+        (_screen == null && !widget.state.prefs.onboarded);
+
+    // A pairing link asks this phone to grant another device access; it never
+    // touches the importer.
+    final pairing = parsePairingLink(raw);
+    if (pairing != null) {
+      if (duringOnboarding) {
+        _pendingPairing = pairing;
+      } else {
+        _askApproval(pairing);
+      }
+      return;
+    }
+
+    final parsed = parseDeepLink(raw);
+    if (parsed == null) return; // not a hideip import link
+    if (duringOnboarding) {
       _pendingLinkText = parsed.text;
       return;
     }
     _openImportWith(parsed.text);
+  }
+
+  /// Shows the approval sheet for [pairing]. A phone with no live subscription
+  /// has nothing to hand out, so it is told that instead of being walked into
+  /// a call that can only fail.
+  Future<void> _askApproval(DeepLinkPairing pairing) async {
+    final state = widget.state;
+    if (!state.canLinkDevices) {
+      state.showToast('Premium is needed to link another device');
+      return;
+    }
+    await showLinkApprovalSheet(context, state: state, pairing: pairing);
   }
 
   void _openImportWith(String text) {
@@ -197,7 +227,7 @@ class _HipShellState extends State<HipShell>
         HipScreen.detail => HipScreen.locations,
         HipScreen.import => _importFrom,
         HipScreen.paywall => _paywallFrom,
-        HipScreen.premium => HipScreen.settings,
+        HipScreen.premium || HipScreen.linkedDevices => HipScreen.settings,
         HipScreen.trialExpired => HipScreen.home,
         _ => null,
       };
@@ -289,6 +319,8 @@ class _HipShellState extends State<HipShell>
           PaywallScreen(state: state, nav: _nav, from: _paywallFrom),
         HipScreen.premium => PremiumManageScreen(state: state, nav: _nav),
         HipScreen.trialExpired => TrialExpiredScreen(state: state, nav: _nav),
+        HipScreen.linkedDevices =>
+          LinkedDevicesScreen(state: state, nav: _nav),
       };
 
   Color _bgFor(HipScreen s) =>
@@ -353,6 +385,14 @@ class _HipShellState extends State<HipShell>
           _pendingLinkText = null;
           WidgetsBinding.instance
               .addPostFrameCallback((_) => _openImportWith(text));
+        }
+        // Same for a pairing link: the approval sheet needs a settled screen
+        // underneath it, so it waits out onboarding too.
+        if (_pendingPairing != null && _screen != HipScreen.onboarding) {
+          final pairing = _pendingPairing!;
+          _pendingPairing = null;
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _askApproval(pairing));
         }
 
         final iosSwipe = Theme.of(context).platform == TargetPlatform.iOS;

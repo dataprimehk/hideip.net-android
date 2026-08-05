@@ -62,6 +62,18 @@ class SettingsScreen extends StatelessWidget {
                         ? nav.openPaywall(HipScreen.settings)
                         : nav.go(HipScreen.premium),
                   ),
+                  // Only a phone that actually holds a provisioned
+                  // subscription can hand access to anything else, so the row
+                  // appears with the token rather than with the entitlement.
+                  if (state.canLinkDevices)
+                    HipListRow(
+                      leading: grayTile(Icons.devices_outlined),
+                      title: 'Linked devices',
+                      subtitle: 'Use Premium in your browser and on desktop',
+                      trailing: Icon(Icons.chevron_right,
+                          size: 17, color: Hip.muted2),
+                      onTap: () => nav.go(HipScreen.linkedDevices),
+                    ),
                 ]),
               ],
               const HipSectionLabel('Interface'),
