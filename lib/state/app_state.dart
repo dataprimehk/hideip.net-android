@@ -232,9 +232,16 @@ class AppState extends ChangeNotifier {
     final url = await _provisioning.provision(proof);
     if (url == null) return;
     await PremiumSub.saveUrl(url);
-    final fresh = await _provisioning.fetchProfiles(url);
+    final refresh = await _provisioning.refreshProfiles(
+      url,
+      cachedProfiles: _profiles,
+    );
+    final fresh = refresh?.profiles;
     if (fresh != null && fresh.isNotEmpty) {
       _applyPremiumProfiles(fresh);
+      await _persist();
+      final epoch = refresh?.catalogEpoch;
+      if (epoch != null) await PremiumSub.saveCatalogEpoch(epoch);
       iapLog('[iap] provisioned: ${fresh.length} profile(s)');
     }
   }
@@ -258,10 +265,17 @@ class AppState extends ChangeNotifier {
       if (proof != null) await _provisionPremium(proof);
       return;
     }
-    final fresh = await _provisioning.fetchProfiles(url);
-    if (fresh == null) return; // transient failure: keep what we have
+    final refresh = await _provisioning.refreshProfiles(
+      url,
+      cachedProfiles: _profiles,
+    );
+    final fresh = refresh?.profiles;
+    if (fresh == null) return; // unchanged or transient failure: keep cache
     if (fresh.isEmpty && !_profiles.any(isPremiumProfile)) return;
     _applyPremiumProfiles(fresh);
+    await _persist();
+    final epoch = refresh?.catalogEpoch;
+    if (epoch != null) await PremiumSub.saveCatalogEpoch(epoch);
   }
 
   /// Swap the managed premium profiles for [fresh], preserving the user's
