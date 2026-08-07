@@ -548,4 +548,94 @@ void main() {
     expect(refresh?.catalogEpoch, 7);
     expect(requests, [source]);
   });
+
+  test('catalog requests carry no header that identifies the client', () async {
+    // Mirrors are third parties. A fixed self-naming User-Agent on a static
+    // public document would let anyone watching that traffic enumerate our
+    // users, which is the opposite of what the app is for.
+    var headers = <String, String>{};
+    final client = CatalogClient(
+      client: MockClient((request) async {
+        headers = request.headers;
+        return http.Response(await _signedCatalog(), 200);
+      }),
+      sources: [Uri.parse('https://mirror.test/catalog')],
+      publicKey: catalogVerificationPublicKey,
+    );
+
+    expect((await client.fetch())?.epoch, 7);
+    expect(
+      headers.keys.map((key) => key.toLowerCase()),
+      isNot(contains('user-agent')),
+    );
+  });
+
+  test('an oversized response is skipped before it is parsed', () async {
+    final oversized = jsonEncode({'padding': 'x' * (catalogMaxBytes + 1)});
+    final client = CatalogClient(
+      client: MockClient(
+        (_) async => http.Response(oversized, 200),
+      ),
+      sources: [Uri.parse('https://mirror.test/catalog')],
+      publicKey: catalogVerificationPublicKey,
+    );
+
+    expect(await client.fetch(), isNull);
+  });
+
+  test('a document signed by another key is rejected', () async {
+    // Proves the embedded key is the actual trust anchor rather than a value
+    // that happens to be carried alongside the document.
+    final other = await Ed25519().newKeyPairFromSeed(
+      List<int>.generate(32, (index) => 200 - index),
+    );
+    final otherPublic = await other.extractPublicKey();
+
+    expect(
+      await decodeVerifiedCatalog(
+        await _signedCatalog(),
+        base64Encode(otherPublic.bytes),
+      ),
+      isNull,
+    );
+  });
+
+  test('the stored catalog epoch only ever moves forward', () async {
+    // Two refreshes can overlap and both read the floor before either writes;
+    // without this the slower, older one drags the rollback guard back down.
+    await PremiumSub.saveCatalogEpoch(9);
+    await PremiumSub.saveCatalogEpoch(8);
+    expect(await PremiumSub.catalogEpoch(), 9);
+
+    await PremiumSub.saveCatalogEpoch(11);
+    expect(await PremiumSub.catalogEpoch(), 11);
+  });
+
+  test('"all" is a wildcard only when it is the whole audience', () async {
+    // audience_allows on the control plane reads it that way, and a looser
+    // reading here would surface a server the subscription path withholds.
+    final payload = _catalogPayload();
+    (payload['servers'] as List)[0]['audience'] = 'all,desktop';
+    final algorithm = Ed25519();
+    final keyPair = await algorithm.newKeyPairFromSeed(_testSeed);
+    final signature = await algorithm.sign(
+      utf8.encode(canonicalCatalogJson(payload)),
+      keyPair: keyPair,
+    );
+    final body = jsonEncode({
+      ...payload,
+      'signature': base64Encode(signature.bytes),
+    });
+
+    final catalog = await decodeVerifiedCatalog(
+      body,
+      catalogVerificationPublicKey,
+    );
+    final profiles = profilesFromCatalog(
+      catalog!,
+      const CatalogIdentity(uuid: 'uuid-local', subToken: 'sub-token'),
+    );
+
+    expect(profiles.map((profile) => profile.name), ['Zürich']);
+  });
 }

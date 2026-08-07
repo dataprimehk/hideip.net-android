@@ -242,8 +242,16 @@ class PremiumSub {
   static Future<int?> catalogEpoch() async =>
       (await SharedPreferences.getInstance()).getInt(_kCatalogEpoch);
 
-  static Future<void> saveCatalogEpoch(int epoch) async =>
-      (await SharedPreferences.getInstance()).setInt(_kCatalogEpoch, epoch);
+  /// Only ever moves forward. Two refreshes can overlap (a purchase and a
+  /// periodic one both start without awaiting each other), and both read the
+  /// stored epoch before either writes; a plain write would let the slower,
+  /// older one lower the floor the rollback guard rests on.
+  static Future<void> saveCatalogEpoch(int epoch) async {
+    final prefs = await SharedPreferences.getInstance();
+    final known = prefs.getInt(_kCatalogEpoch);
+    if (known != null && epoch <= known) return;
+    await prefs.setInt(_kCatalogEpoch, epoch);
+  }
 
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();

@@ -2,18 +2,44 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
-import 'app_version.dart';
 import 'proxy_profile.dart';
 import 'share_link_parser.dart';
 
 const Duration catalogSourceTimeout = Duration(seconds: 4);
 
-/// Fixed public key for the catalog signature verifier.
-/// TODO(filip): Replace this test fixture with the production Ed25519 public key before release.
-const String catalogVerificationPublicKey =
+/// Ceiling on a catalog response. The real document is a few kilobytes; a
+/// mirror that answers with something far larger is either broken or hostile,
+/// and neither is worth parsing or verifying.
+const int catalogMaxBytes = 512 * 1024;
+
+/// The public half of the fixture key in `test/catalog_test.dart`, whose seed
+/// is bytes 0..31 and therefore public knowledge in this GPLv3 repository.
+/// Shipping it would let anyone sign a catalog pointing at their own servers.
+const String _testVerificationPublicKey =
     'A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=';
+
+/// Fixed public key for the catalog signature verifier.
+///
+/// TODO(filip): pass the production key through
+/// `--dart-define=HIDEIP_CATALOG_PUBLIC_KEY=...` in the release build.
+const String catalogVerificationPublicKey = String.fromEnvironment(
+  'HIDEIP_CATALOG_PUBLIC_KEY',
+  defaultValue: _testVerificationPublicKey,
+);
+
+/// Whether the build is still verifying against the published fixture key.
+bool get catalogUsesTestKey =>
+    catalogVerificationPublicKey == _testVerificationPublicKey;
+
+/// A release build will not touch a catalog while the fixture key is in
+/// place. Verifying against a key whose private half is published is worse
+/// than not verifying at all, and falling back to /v1/sub costs nothing.
+/// Debug builds keep the catalog path so it stays testable before the real
+/// key exists.
+bool get catalogVerificationIsUsable => !(kReleaseMode && catalogUsesTestKey);
 
 /// The local part of a premium credential needed to combine a public catalog
 /// with the user's existing entitlement.
@@ -229,12 +255,16 @@ class CatalogClient {
        sources = List.unmodifiable(sources);
 
   Future<CatalogDocument?> fetch({int? minimumEpoch}) async {
+    if (!catalogVerificationIsUsable) return null;
     for (final source in sources) {
       try {
-        final response = await _client
-            .get(source, headers: subscriptionHeaders)
-            .timeout(timeout);
+        // No User-Agent and no other identifying header. The catalog is a
+        // static public document, so nothing here needs to say which client
+        // asked for it, and mirrors are third parties: a fixed self-naming
+        // header would let anyone watching that traffic enumerate our users.
+        final response = await _client.get(source).timeout(timeout);
         if (response.statusCode != 200) continue;
+        if (response.bodyBytes.length > catalogMaxBytes) continue;
         final catalog = await decodeVerifiedCatalog(response.body, publicKey);
         if (catalog == null) continue;
         if (minimumEpoch != null && catalog.epoch < minimumEpoch) continue;
@@ -322,7 +352,11 @@ List<ProxyProfile> profilesFromCatalog(
   return profiles;
 }
 
+/// Mirrors `audience_allows` on the control plane exactly: "all" is only a
+/// wildcard when it is the entire value, never as one member of a list. A
+/// looser reading here would show a server the subscription path withholds.
 bool _audienceAllowsPhone(String value) {
-  final parts = value.split(',').map((part) => part.trim());
-  return parts.contains('all') || parts.contains('phone');
+  final trimmed = value.trim();
+  if (trimmed == 'all') return true;
+  return trimmed.split(',').map((part) => part.trim()).contains('phone');
 }
