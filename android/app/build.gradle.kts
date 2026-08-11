@@ -36,6 +36,16 @@ if (releaseRequested && !releaseSigningReady) {
     throw GradleException("Release signing is not configured: $detail")
 }
 
+val libboxAar = file("libs/libbox.aar")
+val nativeBuildRequested = gradle.startParameter.taskNames.any {
+    listOf("assemble", "bundle", "compile", "merge", "package").any(it::contains)
+}
+if (nativeBuildRequested && !libboxAar.isFile) {
+    throw GradleException(
+        "Missing locally verified libbox AAR. Run scripts/build-libbox.sh --android first.",
+    )
+}
+
 android {
     namespace = "net.hideip.vpn"
     compileSdk = flutter.compileSdkVersion
@@ -94,8 +104,8 @@ kotlin {
 }
 
 dependencies {
-    // sing-box core (prebuilt gomobile .aar via JitPack), GPLv3
-    implementation("com.github.singbox-android:libbox:1.13.12")
+    // GPLv3 sing-box core built by scripts/build-libbox.sh from pinned source.
+    implementation(files(libboxAar))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
 

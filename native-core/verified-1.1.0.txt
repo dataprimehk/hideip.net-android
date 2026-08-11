@@ -1,0 +1,35 @@
+Verification date: 2026-08-11
+App version: 1.1.0+5
+
+sing_box_tag=v1.13.12
+sing_box_commit=1086ab2563320e0da0c23b3a491d8dfa0939dff4
+go_version=go1.26.5
+govulncheck_version=v1.6.0
+gomobile_module=v0.1.12
+android_api=24
+android_ndk_version=28.2.13676358
+xcode_version=26.6
+xcode_build=17F113
+ios_sdk_version=26.5
+modules_sha256=8e97de133b39b5bd8580aeebfac18c55ba9d0eba407ab2ae7e8f17e2df8ef993
+
+android_aar_sha256=bdbf422cbe90440ee3526007408848025e7704bf6d1986dae1f800ea033135cf
+android_arm64-v8a_libbox_sha256=b253bef9284f5de4968ad33dc168df16998603a7c5837715363c400076a6d58f
+android_armeabi-v7a_libbox_sha256=8691c1f9c158cb5447e5c1d91174a0efafa892ffbfc8275db5bb0550ed7ef464
+android_x86_libbox_sha256=d5ad0ad997567f32a8149cbf2ba3b91c4a093346d6988bb9c4d6c45e668af5e2
+android_x86_64_libbox_sha256=0b618ccb3d1abeb5f5f9da3cfef57084abddad0a2e8acea7ce577758f9b28441
+
+apple_ios_arm64_libbox_sha256=92b296cc2cdda07ced8c3691150622b1f6375f4a193bbb06aaaa0baa91ec0c9d
+apple_simulator_arm64_x86_64_libbox_sha256=fac5ec76a862f614c030c5b23de0061285ead40b214b64be39112605e8ad470f
+
+Source govulncheck result for Android tags: 0 reachable vulnerabilities.
+Source govulncheck result for Apple tags: 0 reachable vulnerabilities.
+Android binary scan result for every ABI: GO-2026-5932 only. This advisory has
+no fixed version and covers the unsafe-by-design legacy OpenPGP package. The
+source scan finds no call path and the Android dependency package list contains
+no golang.org/x/crypto/openpgp package. The build recipe fails for any other
+source or binary result.
+
+Compatibility smoke:
+- flutter build apk --debug: passed against the locally built AAR
+- flutter build ios --release --no-codesign: passed against the XCFramework

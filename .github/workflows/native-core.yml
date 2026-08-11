@@ -1,0 +1,54 @@
+name: Native core security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/native-core.yml"
+      - "android/app/build.gradle.kts"
+      - "android/build.gradle.kts"
+      - "native-core/**"
+      - "scripts/build-libbox.sh"
+      - "scripts/verify-libbox-artifacts.sh"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/native-core.yml"
+      - "android/app/build.gradle.kts"
+      - "android/build.gradle.kts"
+      - "native-core/**"
+      - "scripts/build-libbox.sh"
+      - "scripts/verify-libbox-artifacts.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-native-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: false
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+      - name: Install pinned Android toolchain
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+
+      - name: Build and scan native core
+        run: scripts/build-libbox.sh --android
+
+      - name: Verify reviewed artifact hashes
+        run: scripts/verify-libbox-artifacts.sh --android

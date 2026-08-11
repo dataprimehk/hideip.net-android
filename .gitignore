@@ -44,5 +44,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Built from sing-box source by scripts/build-libbox-ios.sh
+# Built from the pinned sing-box source by scripts/build-libbox.sh
+/android/app/libs/libbox.aar
 /ios/Frameworks/Libbox.xcframework
