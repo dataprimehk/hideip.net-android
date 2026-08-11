@@ -71,8 +71,9 @@ class AppState extends ChangeNotifier {
 
   List<ProxyProfile> get profiles => List.unmodifiable(_profiles);
   int get selectedIndex => _selected;
-  ProxyProfile? get selected =>
-      (_selected >= 0 && _selected < _profiles.length) ? _profiles[_selected] : null;
+  ProxyProfile? get selected => (_selected >= 0 && _selected < _profiles.length)
+      ? _profiles[_selected]
+      : null;
   ConnState get conn => _conn;
   String? get error => _error;
   String? get publicIp => _publicIp;
@@ -92,6 +93,7 @@ class AppState extends ChangeNotifier {
   /// used, expiry, panel link), or null when none was captured.
   SubInfo? subInfoFor(String subUrl) => _subInfos[subUrl];
   UiPrefs get prefs => _prefs;
+
   /// The current entitlement with expiry applied at read time. The persisted
   /// copy is only re-evaluated on launch, but a session can outlive the
   /// period (long-running app, or a clock that was behind at load); the real
@@ -100,10 +102,14 @@ class AppState extends ChangeNotifier {
     final r = _premium.renews;
     if (_premium.isOn && r != null && r.isBefore(DateTime.now())) {
       return Premium(
-          status: PremiumStatus.expired, plan: _premium.plan, renews: r);
+        status: PremiumStatus.expired,
+        plan: _premium.plan,
+        renews: r,
+      );
     }
     return _premium;
   }
+
   String? get toast => _toast;
 
   /// Whether Android's system Always-on VPN is enabled for this app (as last
@@ -123,7 +129,8 @@ class AppState extends ChangeNotifier {
 
   /// The quiet status line for the home screen ("speed mode" /
   /// "stealth fallback"), or null when there is nothing to say.
-  String? get speedStatus => isConnected ? speedStatusLine(_path, _fallback) : null;
+  String? get speedStatus =>
+      isConnected ? speedStatusLine(_path, _fallback) : null;
 
   /// Whether the subscription has already used its five WireGuard slots.
   bool get speedDeviceLimit => _wgDeviceLimit;
@@ -172,8 +179,10 @@ class AppState extends ChangeNotifier {
     // reconnect / on-demand rules) with no Dart in the loop.
     VpnController.setKillSwitch(_prefs.killSwitch);
     _premium = await Premium.load();
-    iapLog('[iap] loaded: ${_premium.status.name} plan=${_premium.plan?.name}'
-        ' renews=${_premium.renews} now=${DateTime.now()}');
+    iapLog(
+      '[iap] loaded: ${_premium.status.name} plan=${_premium.plan?.name}'
+      ' renews=${_premium.renews} now=${DateTime.now()}',
+    );
     // The store is the source of truth: every entitlement it reports (a
     // purchase, a restore, a renewal from a previous session) lands here.
     _purchases.init(
@@ -297,8 +306,10 @@ class AppState extends ChangeNotifier {
     if (token == null) return;
     // First use generates the keypair; later calls reuse it.
     final keys = await WgIdentity.ensure();
-    final result =
-        await _wg.register(subToken: token, publicKey: keys.publicKey);
+    final result = await _wg.register(
+      subToken: token,
+      publicKey: keys.publicKey,
+    );
     switch (result.status) {
       case WgRegisterStatus.ok:
         _wgProfile = result.profile;
@@ -351,8 +362,10 @@ class AppState extends ChangeNotifier {
       final token = subTokenFromUrl(await PremiumSub.url());
       final keys = await WgIdentity.load();
       if (token != null && keys != null) {
-        final revoked =
-            await _wg.revoke(subToken: token, publicKey: keys.publicKey);
+        final revoked = await _wg.revoke(
+          subToken: token,
+          publicKey: keys.publicKey,
+        );
         // With the slot freed, retire the keypair too, so re-enabling mints a
         // fresh identity: that is the recovery path for an identity cloned by
         // a device restore. After a failed revoke the key is kept instead;
@@ -536,8 +549,10 @@ class AppState extends ChangeNotifier {
 
   /// Add pre-parsed profiles (the redesign import screen parses before
   /// committing, so the user can review what was detected first).
-  Future<void> addProfiles(List<ProxyProfile> newProfiles,
-      {bool select = false}) async {
+  Future<void> addProfiles(
+    List<ProxyProfile> newProfiles, {
+    bool select = false,
+  }) async {
     if (newProfiles.isEmpty) return;
     final sel = selected;
     // Re-importing a subscription the list already holds must replace its
@@ -634,12 +649,14 @@ class AppState extends ChangeNotifier {
     if (_pinging || _profiles.isEmpty) return;
     _pinging = true;
     notifyListeners();
-    await Future.wait(_profiles.map((p) async {
-      final key = '${p.server}:${p.port}';
-      final result = await Ping.measure(p.server, p.port);
-      _pings[key] = result;
-      notifyListeners();
-    }));
+    await Future.wait(
+      _profiles.map((p) async {
+        final key = '${p.server}:${p.port}';
+        final result = await Ping.measure(p.server, p.port);
+        _pings[key] = result;
+        notifyListeners();
+      }),
+    );
     _pinging = false;
     notifyListeners();
   }
@@ -660,8 +677,10 @@ class AppState extends ChangeNotifier {
     try {
       // The OS consent dialog returns via the platform channel. Guard against a
       // dropped/never-delivered result so the UI can't get stuck "Connecting…".
-      final ok = await VpnController.prepare()
-          .timeout(const Duration(seconds: 60), onTimeout: () => false);
+      final ok = await VpnController.prepare().timeout(
+        const Duration(seconds: 60),
+        onTimeout: () => false,
+      );
       if (!ok) {
         // User cancelled consent (or it timed out): return to a clean state.
         _conn = ConnState.disconnected;
@@ -687,8 +706,10 @@ class AppState extends ChangeNotifier {
       }
       if (!startedSpeed) {
         _path = TunnelPath.stealth;
-        final config =
-            SingboxConfig.buildJson(profile, killSwitch: _prefs.killSwitch);
+        final config = SingboxConfig.buildJson(
+          profile,
+          killSwitch: _prefs.killSwitch,
+        );
         await VpnController.start(config, label: profile.name);
       }
       _startStatusPoll();
@@ -784,8 +805,10 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       await VpnController.stop();
-      final config =
-          SingboxConfig.buildJson(stealth, killSwitch: _prefs.killSwitch);
+      final config = SingboxConfig.buildJson(
+        stealth,
+        killSwitch: _prefs.killSwitch,
+      );
       await VpnController.start(config, label: stealth.name);
       _startStatusPoll();
       _conn = ConnState.connected;
@@ -840,7 +863,10 @@ class AppState extends ChangeNotifier {
 
   void _startStatusPoll() {
     _statusPoll?.cancel();
-    _statusPoll = Timer.periodic(const Duration(seconds: 2), (_) => _syncStatus());
+    _statusPoll = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _syncStatus(),
+    );
   }
 
   Future<void> _syncStatus({bool initial = false}) async {
