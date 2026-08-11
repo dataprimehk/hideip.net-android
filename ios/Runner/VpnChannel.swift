@@ -1,5 +1,6 @@
 import Flutter
 import NetworkExtension
+import UIKit
 
 /// Bridges Flutter <-> NETunnelProviderManager, the iOS counterpart of
 /// MainActivity.kt.
@@ -33,7 +34,31 @@ final class VpnChannel: NSObject {
         case "status": status(result)
         case "stats": stats(result)
         case "setKillSwitch": setKillSwitch(call, result)
+        case "setSensitiveClipboard": setSensitiveClipboard(call, result)
         default: result(FlutterMethodNotImplemented)
+        }
+    }
+
+    private func setSensitiveClipboard(
+        _ call: FlutterMethodCall, _ result: @escaping FlutterResult
+    ) {
+        guard let args = call.arguments as? [String: Any?],
+              let text = args["text"] as? String, !text.isEmpty
+        else {
+            result(FlutterError(
+                code: "no_clipboard_text", message: "text is required", details: nil))
+            return
+        }
+        let requested = (args["ttlMs"] as? NSNumber)?.doubleValue ?? 60_000
+        let ttl = min(max(requested, 5_000), 300_000) / 1_000
+        DispatchQueue.main.async {
+            UIPasteboard.general.setItems(
+                [["public.utf8-plain-text": text]],
+                options: [
+                    .localOnly: true,
+                    .expirationDate: Date().addingTimeInterval(ttl),
+                ])
+            result(true)
         }
     }
 

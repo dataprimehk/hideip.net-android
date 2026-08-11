@@ -2,15 +2,22 @@ package net.hideip.vpn
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PersistableBundle
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.UUID
 
 /**
  * Bridges Flutter <-> the native VpnService.
@@ -89,6 +96,7 @@ class MainActivity : FlutterActivity() {
                             .apply()
                         result.success(true)
                     }
+                    "setSensitiveClipboard" -> setSensitiveClipboard(call, result)
                     "openVpnSettings" -> {
                         try {
                             startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
@@ -110,6 +118,37 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun setSensitiveClipboard(
+        call: io.flutter.plugin.common.MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        val text = call.argument<String>("text")
+        if (text.isNullOrEmpty()) {
+            result.error("no_clipboard_text", "text is required", null)
+            return
+        }
+        val ttlMs = (call.argument<Number>("ttlMs")?.toLong() ?: 60_000L)
+            .coerceIn(5_000L, 300_000L)
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val marker = UUID.randomUUID().toString()
+        val clip = ClipData.newPlainText("hideip.net sensitive value", text)
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean("android.content.extra.IS_SENSITIVE", true)
+            putString(CLIP_MARKER, marker)
+        }
+        clipboard.setPrimaryClip(clip)
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (clipboard.primaryClipDescription?.extras?.getString(CLIP_MARKER) == marker) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    clipboard.clearPrimaryClip()
+                } else {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+                }
+            }
+        }, ttlMs)
+        result.success(true)
     }
 
     /** Whether Android's system Always-on VPN points at this app. Normal apps
@@ -144,6 +183,10 @@ class MainActivity : FlutterActivity() {
         } else {
             result.success(true)
         }
+    }
+
+    companion object {
+        private const val CLIP_MARKER = "net.hideip.vpn.CLIP_MARKER"
     }
 
     private fun ensureNotificationPermission() {

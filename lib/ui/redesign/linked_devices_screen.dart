@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/deep_link.dart';
 import '../../core/device_link.dart';
 import '../../core/haptics.dart';
+import '../../core/sensitive_clipboard.dart';
 import '../../state/app_state.dart';
 import '../qr_scan_screen.dart';
 import 'hip.dart';
@@ -560,8 +560,11 @@ class _LinkCodeSheetState extends State<_LinkCodeSheet> {
           GestureDetector(
             onTap: expired
                 ? null
-                : () {
-                    Clipboard.setData(ClipboardData(text: code.code));
+                : () async {
+                    await SensitiveClipboard.setText(
+                      code.code,
+                      ttl: _left,
+                    );
                     Haptics.selection();
                     widget.state.showToast('Code copied');
                   },

@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/config_redaction.dart';
 import '../../core/location.dart';
 import '../../core/ping.dart';
+import '../../core/sensitive_clipboard.dart';
 import '../../state/app_state.dart';
 import '../brand.dart';
 import 'hip.dart';
@@ -53,9 +55,42 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Future<void> _copyConfig() async {
     const encoder = JsonEncoder.withIndent('  ');
-    await Clipboard.setData(
-        ClipboardData(text: encoder.convert(widget.location.profile.outbound)));
-    widget.state.showToast('Config copied');
+    await Clipboard.setData(ClipboardData(
+        text: encoder.convert(redactConfig(widget.location.profile.outbound))));
+    widget.state.showToast('Redacted config copied');
+  }
+
+  Future<void> _copyFullConfig() async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Copy full config?'),
+            content: const Text(
+              'The full config contains credentials that can be used to access '
+              'this server. It will be marked sensitive and expire after one minute.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Copy for 1 minute'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+    const encoder = JsonEncoder.withIndent('  ');
+    try {
+      await SensitiveClipboard.setText(
+          encoder.convert(widget.location.profile.outbound));
+      widget.state.showToast('Full config copied for 1 minute');
+    } on PlatformException {
+      widget.state.showToast('Could not copy full config');
+    }
   }
 
   Future<void> _remove() async {
@@ -130,6 +165,11 @@ class _DetailScreenState extends State<DetailScreen> {
                   ghost: true,
                   leading: const Icon(Icons.copy_outlined),
                   onTap: _copyConfig),
+              const SizedBox(height: 8),
+              HipCta('Copy full config',
+                  ghost: true,
+                  leading: const Icon(Icons.warning_amber_rounded),
+                  onTap: _copyFullConfig),
               GestureDetector(
                 onTap: _remove,
                 behavior: HitTestBehavior.opaque,
