@@ -39,14 +39,13 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- The custom scheme carries only an opaque, non-secret pairing
-                 id. Import credentials use a verified hideip.net HTTPS link. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="hideip" android:host="link"/>
-            </intent-filter>
+            <!-- Where import links are headed: an app link Android verifies
+                 against hideip.net, so no other app can claim it, with the
+                 payload in the fragment where no request line or server log
+                 ever sees it. Verification needs the real Play App Signing
+                 SHA-256 in the site's assetlinks.json; until that is
+                 published this filter is inert and the scheme below carries
+                 everything. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
@@ -55,6 +54,23 @@
                     android:scheme="https"
                     android:host="hideip.net"
                     android:pathPrefix="/add"/>
+                <data
+                    android:scheme="https"
+                    android:host="www.hideip.net"
+                    android:pathPrefix="/add"/>
+            </intent-filter>
+            <!-- The custom scheme, kept for the transition. Any app may
+                 register it, which is why it is not the destination, but the
+                 seller snippets already copied into third-party panels use it
+                 and nobody can edit those for us. Dropping it would not move
+                 those buttons to the safe path, only break them. Nothing here
+                 imports on its own: a link prefills the import screen and a
+                 person still has to press the button. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="hideip"/>
             </intent-filter>
         </activity>
         <service

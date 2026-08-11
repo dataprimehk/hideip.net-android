@@ -84,12 +84,13 @@ void main() {
       expect(parsePairingLink(pair), isNotNull);
       expect(parseDeepLink(import), isNotNull);
       expect(parsePairingLink(import), isNull);
-      expect(
-        parseDeepLink(
-          'hideip://install-config?url=https%3A%2F%2Fe.com%2Fs',
-        ),
-        isNull,
-      );
+
+      // The transitional custom scheme carries imports as well, and sharing a
+      // scheme with pairing is exactly why this cross-check exists: an import
+      // must never be read as a request to hand out this phone's access.
+      const legacy = 'hideip://install-config?url=https%3A%2F%2Fe.com%2Fs';
+      expect(parseDeepLink(legacy), isNotNull);
+      expect(parsePairingLink(legacy), isNull);
     });
   });
 
