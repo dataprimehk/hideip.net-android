@@ -16,11 +16,16 @@ class IpLookupData {
   const IpLookupData({required this.ip, this.geo});
 }
 
-/// Public-IP proof is disabled by default until a first-party endpoint is
-/// supplied at build time. No third party learns that this app launched, which
-/// server a user imported, or when the tunnel was toggled.
+/// Public-IP proof comes from hideip.net's own endpoint. A phone cannot know
+/// its public address without asking something past the NAT, and asking a
+/// third party told that party every user's real address and the moment each
+/// tunnel came up. Asking our own host gives nothing away that provisioning,
+/// the subscription fetch and the catalog read did not already give it.
 class IpLookup {
-  static const _endpoint = String.fromEnvironment('HIDEIP_IP_ENDPOINT');
+  static const _endpoint = String.fromEnvironment(
+    'HIDEIP_IP_ENDPOINT',
+    defaultValue: 'https://api.hideip.net:8444/v1/ip',
+  );
   static const _timeout = Duration(seconds: 8);
   static const _shotIp = String.fromEnvironment('HIP_SHOT_IP');
 
