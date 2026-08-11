@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 
+import '../core/async_gate.dart';
 import '../core/device_link.dart';
 import '../core/haptics.dart';
 import '../core/ip_lookup.dart';
@@ -47,6 +48,7 @@ class AppState extends ChangeNotifier {
   UiPrefs _prefs = const UiPrefs();
   final PurchaseService _purchases = PurchaseService();
   final ProvisioningService _provisioning = ProvisioningService();
+  final AsyncGate _premiumRefreshGate = AsyncGate();
   final UserSubscriptionService _userSubs = UserSubscriptionService();
   // Plan metadata (data used, expiry, provider name/links) keyed by
   // subscription URL, captured from the provider's response headers on refresh.
@@ -269,7 +271,10 @@ class AppState extends ChangeNotifier {
   /// Exchange the signed purchase proof for tunnel credentials and pull the
   /// premium profiles in. Every step is retried on the next launch (or the
   /// next store event) if it fails here, so errors stay silent.
-  Future<void> _provisionPremium(PurchasePayload proof) async {
+  Future<void> _provisionPremium(PurchasePayload proof) =>
+      _premiumRefreshGate.run(() => _provisionPremiumLocked(proof));
+
+  Future<void> _provisionPremiumLocked(PurchasePayload proof) async {
     await PremiumSub.saveProof(proof);
     final url = await _provisioning.provision(proof);
     if (url == null) return;
@@ -282,11 +287,14 @@ class AppState extends ChangeNotifier {
     );
     final fresh = refresh?.profiles;
     if (fresh != null && fresh.isNotEmpty) {
-      _applyPremiumProfiles(fresh);
-      await _persist();
       final epoch = refresh?.catalogEpoch;
-      if (epoch != null) await PremiumSub.saveCatalogEpoch(epoch);
-      iapLog('[iap] provisioned: ${fresh.length} profile(s)');
+      final floor = await PremiumSub.catalogEpoch();
+      if (epoch == null || floor == null || epoch >= floor) {
+        _applyPremiumProfiles(fresh);
+        await _persist();
+        if (epoch != null) await PremiumSub.saveCatalogEpoch(epoch);
+        iapLog('[iap] provisioned: ${fresh.length} profile(s)');
+      }
     }
     await _refreshWireGuard(url);
   }
@@ -383,7 +391,10 @@ class AppState extends ChangeNotifier {
   /// On launch: re-fetch premium profiles while the subscription lives (the
   /// server may rotate keys or add locations), retry a provision that never
   /// completed, and clear the managed profiles once the subscription lapsed.
-  Future<void> _refreshPremiumProfiles() async {
+  Future<void> _refreshPremiumProfiles() =>
+      _premiumRefreshGate.run(_refreshPremiumProfilesLocked);
+
+  Future<void> _refreshPremiumProfilesLocked() async {
     if (!premium.isOn) {
       if (premium.status == PremiumStatus.expired &&
           _profiles.any(isPremiumProfile)) {
@@ -402,7 +413,7 @@ class AppState extends ChangeNotifier {
     final url = await PremiumSub.url();
     if (url == null) {
       final proof = await PremiumSub.proof();
-      if (proof != null) await _provisionPremium(proof);
+      if (proof != null) await _provisionPremiumLocked(proof);
       return;
     }
     // Speed mode rides along on the same refresh: the register call is
@@ -417,9 +428,11 @@ class AppState extends ChangeNotifier {
     final fresh = refresh?.profiles;
     if (fresh == null) return; // unchanged or transient failure: keep cache
     if (fresh.isEmpty && !_profiles.any(isPremiumProfile)) return;
+    final epoch = refresh?.catalogEpoch;
+    final floor = await PremiumSub.catalogEpoch();
+    if (epoch != null && floor != null && epoch < floor) return;
     _applyPremiumProfiles(fresh);
     await _persist();
-    final epoch = refresh?.catalogEpoch;
     if (epoch != null) await PremiumSub.saveCatalogEpoch(epoch);
   }
 
@@ -536,7 +549,7 @@ class AppState extends ChangeNotifier {
   /// Import a subscription body (base64 blob or newline links). Returns the
   /// result so the UI can report how many were added and what failed.
   Future<SubscriptionResult> addSubscription(String body) async {
-    final res = Subscription.parse(body);
+    final res = await Subscription.parseAsync(body);
     if (res.profiles.isNotEmpty) {
       _profiles.addAll(res.profiles);
       if (_selected < 0) _selected = 0;
@@ -649,13 +662,15 @@ class AppState extends ChangeNotifier {
     if (_pinging || _profiles.isEmpty) return;
     _pinging = true;
     notifyListeners();
-    await Future.wait(
-      _profiles.map((p) async {
+    await forEachBounded(
+      _profiles,
+      limit: 8,
+      action: (p) async {
         final key = '${p.server}:${p.port}';
         final result = await Ping.measure(p.server, p.port);
         _pings[key] = result;
         notifyListeners();
-      }),
+      },
     );
     _pinging = false;
     notifyListeners();

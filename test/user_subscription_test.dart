@@ -62,6 +62,13 @@ void main() {
       expect(await svc.fetch(url), isNull);
     });
 
+    test('keeps cached profiles when a 200 response has no valid servers',
+        () async {
+      final svc = UserSubscriptionService(
+          client: MockClient((req) async => http.Response('not a profile', 200)));
+      expect(await svc.fetch(url), isNull);
+    });
+
     test('returns empty profiles only when the provider retired the link',
         () async {
       for (final code in [404, 410]) {

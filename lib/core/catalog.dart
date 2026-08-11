@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:http/http.dart' as http;
 
 import 'proxy_profile.dart';
+import 'safe_http.dart';
 import 'share_link_parser.dart';
 
 const Duration catalogSourceTimeout = Duration(seconds: 4);
@@ -241,7 +242,7 @@ CatalogDocument _parseCatalog(Map<String, dynamic> value) {
 
 /// Fetch mirrors in order and return the first verified, non-rollback catalog.
 class CatalogClient {
-  final http.Client _client;
+  final SafeHttpFetcher _fetcher;
   final List<Uri> sources;
   final String publicKey;
   final Duration timeout;
@@ -251,7 +252,9 @@ class CatalogClient {
     required List<Uri> sources,
     required this.publicKey,
     this.timeout = catalogSourceTimeout,
-  }) : _client = client ?? http.Client(),
+  }) : _fetcher = client == null
+           ? SafeHttpFetcher()
+           : SafeHttpFetcher.forTesting(client),
        sources = List.unmodifiable(sources);
 
   Future<CatalogDocument?> fetch({int? minimumEpoch}) async {
@@ -262,9 +265,12 @@ class CatalogClient {
         // static public document, so nothing here needs to say which client
         // asked for it, and mirrors are third parties: a fixed self-naming
         // header would let anyone watching that traffic enumerate our users.
-        final response = await _client.get(source).timeout(timeout);
+        final response = await _fetcher.get(
+          source,
+          maxBytes: catalogMaxBytes,
+          timeout: timeout,
+        );
         if (response.statusCode != 200) continue;
-        if (response.bodyBytes.length > catalogMaxBytes) continue;
         final catalog = await decodeVerifiedCatalog(response.body, publicKey);
         if (catalog == null) continue;
         if (minimumEpoch != null && catalog.epoch < minimumEpoch) continue;

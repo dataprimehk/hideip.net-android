@@ -8,6 +8,7 @@ import 'catalog.dart';
 import 'premium.dart';
 import 'profile_store.dart';
 import 'proxy_profile.dart';
+import 'safe_http.dart';
 import 'subscription.dart';
 
 const String provisioningEndpoint = 'https://api.hideip.net:8444';
@@ -42,6 +43,7 @@ class ProvisioningService {
   static const String endpoint = provisioningEndpoint;
 
   final http.Client _client;
+  final SafeHttpFetcher _safeFetcher;
   final List<Uri> _catalogSources;
   final String _catalogPublicKey;
   final Duration _catalogTimeout;
@@ -52,6 +54,9 @@ class ProvisioningService {
     String? catalogPublicKey,
     Duration? catalogTimeout,
   }) : _client = client ?? http.Client(),
+       _safeFetcher = client == null
+           ? SafeHttpFetcher()
+           : SafeHttpFetcher.forTesting(client),
        _catalogSources =
            catalogSources ??
            catalogSourceUrls.map(Uri.parse).toList(growable: false),
@@ -141,9 +146,10 @@ class ProvisioningService {
     String subscriptionUrl,
   ) async {
     try {
-      final resp = await _client
-          .get(Uri.parse(subscriptionUrl), headers: subscriptionHeaders)
-          .timeout(const Duration(seconds: 20));
+      final resp = await _safeFetcher.get(
+        Uri.parse(subscriptionUrl),
+        headers: subscriptionHeaders,
+      );
       if (resp.statusCode == 404 || resp.statusCode == 410) {
         return const PremiumProfileRefresh(profiles: []);
       }
@@ -151,9 +157,11 @@ class ProvisioningService {
       // Everything this URL serves is subscription-managed by definition;
       // the flag (not the name) is what marks a profile as ours, so the
       // backend is free to label servers by plain location.
-      final profiles = Subscription.parse(
-        resp.body,
-      ).profiles.map((p) => p.copyWith(premium: true)).toList();
+      final parsed = await Subscription.parseAsync(resp.body);
+      final profiles = parsed.profiles
+          .map((p) => p.copyWith(premium: true))
+          .toList();
+      if (profiles.isEmpty) return null;
       final identity = catalogIdentityFromProfiles(subscriptionUrl, profiles);
       if (identity != null) await PremiumSub.saveIdentity(identity);
       return PremiumProfileRefresh(profiles: profiles);

@@ -2,6 +2,7 @@ import 'package:http/http.dart' as http;
 
 import 'app_version.dart';
 import 'proxy_profile.dart';
+import 'safe_http.dart';
 import 'sub_info.dart';
 import 'subscription.dart';
 
@@ -12,9 +13,11 @@ import 'subscription.dart';
 /// origin URL lives on each [ProxyProfile.subUrl] rather than in one shared
 /// key; refresh groups profiles by that URL.
 class UserSubscriptionService {
-  final http.Client _client;
+  final SafeHttpFetcher _fetcher;
   UserSubscriptionService({http.Client? client})
-      : _client = client ?? http.Client();
+      : _fetcher = client == null
+            ? SafeHttpFetcher()
+            : SafeHttpFetcher.forTesting(client);
 
   /// Fetch and parse one subscription URL. Null on any transient failure so
   /// the caller keeps the servers it already has (a flaky network must not
@@ -24,17 +27,18 @@ class UserSubscriptionService {
   /// and any plan headers the provider sent ride along as [SubFetch.info].
   Future<SubFetch?> fetch(String url) async {
     try {
-      final resp = await _client
-          .get(Uri.parse(url), headers: subscriptionHeaders)
-          .timeout(const Duration(seconds: 20));
+      final resp = await _fetcher.get(
+        Uri.parse(url),
+        headers: subscriptionHeaders,
+      );
       if (resp.statusCode == 404 || resp.statusCode == 410) {
         return const SubFetch(profiles: [], info: null);
       }
       if (resp.statusCode != 200) return null;
-      final profiles = Subscription.parse(resp.body)
-          .profiles
+      final profiles = (await Subscription.parseAsync(resp.body)).profiles
           .map((p) => p.copyWith(subUrl: url))
           .toList();
+      if (profiles.isEmpty) return null;
       final info =
           SubInfo.fromHeaders(resp.headers, fetchedAt: DateTime.now());
       return SubFetch(profiles: profiles, info: info);

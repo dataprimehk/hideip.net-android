@@ -2,13 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 
 import '../../core/app_version.dart';
 import '../../core/haptics.dart';
 import '../../core/location.dart';
 import '../../core/ping.dart';
 import '../../core/proxy_profile.dart';
+import '../../core/safe_http.dart';
 import '../../core/share_link_parser.dart';
 import '../../core/sub_info.dart';
 import '../../core/subscription.dart';
@@ -151,13 +151,15 @@ class _ImportScreenState extends State<ImportScreen> {
       // Step 1: obtain profiles.
       List<ProxyProfile> profiles;
       if (isSub && input.startsWith(RegExp(r'https?://', caseSensitive: false))) {
-        final res = await http
-            .get(Uri.parse(input), headers: subscriptionHeaders)
-            .timeout(const Duration(seconds: 12));
+        final res = await SafeHttpFetcher().get(
+          Uri.parse(input),
+          headers: subscriptionHeaders,
+          timeout: const Duration(seconds: 12),
+        );
         if (res.statusCode != 200) {
           throw 'The subscription server answered ${res.statusCode}.';
         }
-        final parsed = Subscription.parse(res.body);
+        final parsed = await Subscription.parseAsync(res.body);
         if (parsed.profiles.isEmpty) throw _subError(parsed);
         // Remember the origin so the app can re-pull it on later launches
         // when the provider rotates its servers.
@@ -168,7 +170,7 @@ class _ImportScreenState extends State<ImportScreen> {
         final info = SubInfo.fromHeaders(res.headers, fetchedAt: DateTime.now());
         if (info != null) await SubInfoStore.put(input, info);
       } else if (isSub) {
-        final parsed = Subscription.parse(input);
+        final parsed = await Subscription.parseAsync(input);
         if (parsed.profiles.isEmpty) throw _subError(parsed);
         profiles = parsed.profiles;
       } else {
@@ -242,7 +244,6 @@ class _ImportScreenState extends State<ImportScreen> {
     );
     if (scanned != null && scanned.isNotEmpty) {
       _text.text = scanned;
-      await _runImport();
     }
   }
 
