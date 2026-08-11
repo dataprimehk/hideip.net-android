@@ -39,14 +39,22 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Custom URL scheme so proxy sellers can put an "Open in hideip"
-                 button on their panels: hideip://import/... and
-                 hideip://install-config?url=... both route into the importer. -->
+            <!-- The custom scheme carries only an opaque, non-secret pairing
+                 id. Import credentials use a verified hideip.net HTTPS link. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="hideip"/>
+                <data android:scheme="hideip" android:host="link"/>
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="hideip.net"
+                    android:pathPrefix="/add"/>
             </intent-filter>
         </activity>
         <service

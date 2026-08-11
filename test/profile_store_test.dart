@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hideip_vpn/core/profile_store.dart';
 import 'package:hideip_vpn/core/proxy_profile.dart';
+import 'package:hideip_vpn/core/secret_prefs.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -73,5 +74,11 @@ void main() {
     });
     final loaded = await ProfileStore.load();
     expect(loaded.map((p) => p.premium).toList(), [true, false]);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.containsKey('profiles_v1'), isFalse);
+    expect(
+      prefs.getString(SecretPrefs.encryptedPreferenceKey('profiles')),
+      isNot(contains('hideip.net Premium')),
+    );
   });
 }

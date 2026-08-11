@@ -66,7 +66,8 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
         const val NATIVE_PREFS = "hideip_native"
         const val KEY_ALWAYS_ON = "always_on_enabled"
         const val KEY_KILL_SWITCH = "kill_switch_enabled"
-        private const val LAST_CONFIG_FILE = "last_config.json"
+        private const val LAST_CONFIG_FILE = "last_config.enc"
+        private const val LEGACY_CONFIG_FILE = "last_config.json"
         private const val LAST_LABEL_FILE = "last_label.txt"
 
         /** Updated so Flutter can poll/observe status. */
@@ -164,7 +165,12 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
      *  when there is no Flutter side to hand us one. App-private storage. */
     private fun persistLastConfig(config: String, label: String?) {
         try {
-            java.io.File(filesDir, LAST_CONFIG_FILE).writeText(config)
+            val encrypted = java.io.File(filesDir, LAST_CONFIG_FILE)
+            ConfigVault.write(encrypted, config)
+            if (ConfigVault.read(encrypted) != config) {
+                throw IllegalStateException("encrypted config verification failed")
+            }
+            java.io.File(filesDir, LEGACY_CONFIG_FILE).delete()
             java.io.File(filesDir, LAST_LABEL_FILE).writeText(label ?: "")
         } catch (e: Exception) {
             Log.w(TAG, "persistLastConfig: ${e.message}")
@@ -173,8 +179,19 @@ class HideipVpnService : VpnService(), PlatformInterface, CommandServerHandler {
 
     private fun readLastConfig(): Pair<String, String?>? {
         return try {
-            val config = java.io.File(filesDir, LAST_CONFIG_FILE)
-                .takeIf { it.exists() }?.readText()
+            val encrypted = java.io.File(filesDir, LAST_CONFIG_FILE)
+            var config = ConfigVault.read(encrypted)
+            if (config.isNullOrBlank()) {
+                val legacy = java.io.File(filesDir, LEGACY_CONFIG_FILE)
+                    .takeIf { it.exists() }?.readText()
+                if (!legacy.isNullOrBlank()) {
+                    ConfigVault.write(encrypted, legacy)
+                    if (ConfigVault.read(encrypted) == legacy) {
+                        java.io.File(filesDir, LEGACY_CONFIG_FILE).delete()
+                    }
+                    config = legacy
+                }
+            }
             if (config.isNullOrBlank()) return null
             val label = java.io.File(filesDir, LAST_LABEL_FILE)
                 .takeIf { it.exists() }?.readText()?.ifBlank { null }

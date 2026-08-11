@@ -8,12 +8,32 @@ plugins {
 }
 
 // Release signing config. key.properties lives outside version control and
-// points at the keystore stored outside the repo. When it is absent (e.g. a
-// fresh clone or CI without secrets), release builds fall back to debug keys.
+// points at the upload keystore stored outside the repo. Release tasks fail
+// closed when any part is absent; debug signing must never reach a store APK.
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+val releaseRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+val signingKeys = listOf("keyAlias", "keyPassword", "storeFile", "storePassword")
+val missingSigningKeys = signingKeys.filter {
+    (keystoreProperties[it] as String?)?.isBlank() != false
+}
+val releaseStoreFile = (keystoreProperties["storeFile"] as String?)?.let(::file)
+val releaseSigningReady = keystorePropertiesFile.exists() &&
+    missingSigningKeys.isEmpty() &&
+    releaseStoreFile?.isFile == true
+if (releaseRequested && !releaseSigningReady) {
+    val detail = when {
+        !keystorePropertiesFile.exists() -> "android/key.properties is missing"
+        missingSigningKeys.isNotEmpty() ->
+            "missing properties: ${missingSigningKeys.joinToString()}"
+        else -> "the configured storeFile does not exist"
+    }
+    throw GradleException("Release signing is not configured: $detail")
 }
 
 android {
@@ -39,10 +59,10 @@ android {
 
     signingConfigs {
         create("release") {
-            if (keystorePropertiesFile.exists()) {
+            if (releaseSigningReady) {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = file(keystoreProperties["storeFile"] as String)
+                storeFile = releaseStoreFile
                 storePassword = keystoreProperties["storePassword"] as String
             }
         }
@@ -50,13 +70,7 @@ android {
 
     buildTypes {
         release {
-            // Sign with the upload key when key.properties is present, otherwise
-            // fall back to debug so `flutter run --release` still works locally.
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("release")
             // Ship only the ABIs real phones use. The sing-box core is a Go
             // binary that costs ~60 MB per architecture, and x86_64 serves
             // emulators alone. These libraries arrive prebuilt from the libbox

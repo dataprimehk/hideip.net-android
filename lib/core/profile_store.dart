@@ -3,18 +3,22 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'proxy_profile.dart';
+import 'secret_prefs.dart';
 
 /// Persists the user's list of [ProxyProfile]s and which one is selected,
 /// in shared_preferences as JSON. Profiles have no stable server-assigned id,
 /// so the selection is stored as an index into the saved list.
 class ProfileStore {
   static const _kProfiles = 'profiles_v1';
+  static const _kSecureProfiles = 'profiles';
   static const _kSelected = 'selected_index_v1';
 
   /// Load saved profiles. Corrupt or unparsable entries are skipped.
   static Future<List<ProxyProfile>> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_kProfiles);
+    final raw = await SecretPrefs.readString(
+      _kSecureProfiles,
+      legacyPreferenceKey: _kProfiles,
+    );
     if (raw == null || raw.isEmpty) return [];
     try {
       final list = jsonDecode(raw) as List;
@@ -29,9 +33,12 @@ class ProfileStore {
 
   /// Overwrite the saved profile list.
   static Future<void> save(List<ProxyProfile> profiles) async {
-    final prefs = await SharedPreferences.getInstance();
     final encoded = jsonEncode(profiles.map(_toMap).toList());
-    await prefs.setString(_kProfiles, encoded);
+    await SecretPrefs.writeString(
+      _kSecureProfiles,
+      encoded,
+      legacyPreferenceKey: _kProfiles,
+    );
   }
 
   static Future<int> loadSelectedIndex() async {

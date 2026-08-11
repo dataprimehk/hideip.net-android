@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:cryptography/cryptography.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'secret_prefs.dart';
+
 /// A WireGuard identity: one Curve25519 keypair, generated on the device.
 ///
 /// The private key never leaves the device. The backend only ever sees
@@ -98,12 +100,34 @@ class WgKeys {
 class WgIdentity {
   static const _kPrivate = 'wg_private_key_v1';
   static const _kPublic = 'wg_public_key_v1';
+  static const _kSecurePair = 'wireguard_identity';
 
   /// The stored keypair, or null when Speed mode has never been used.
   static Future<WgKeyPair?> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final priv = prefs.getString(_kPrivate);
-    final pub = prefs.getString(_kPublic);
+    var raw = await SecretPrefs.readString(_kSecurePair);
+    if (raw == null) {
+      final prefs = await SharedPreferences.getInstance();
+      final legacyPrivate = prefs.getString(_kPrivate);
+      final legacyPublic = prefs.getString(_kPublic);
+      if (legacyPrivate != null && legacyPublic != null) {
+        raw = jsonEncode({'private': legacyPrivate, 'public': legacyPublic});
+        await SecretPrefs.writeString(_kSecurePair, raw);
+        if (await SecretPrefs.readString(_kSecurePair) == raw) {
+          await prefs.remove(_kPrivate);
+          await prefs.remove(_kPublic);
+        }
+      }
+    }
+    if (raw == null) return null;
+    String? priv;
+    String? pub;
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      priv = decoded['private'] as String?;
+      pub = decoded['public'] as String?;
+    } catch (_) {
+      return null;
+    }
     if (priv == null || pub == null) return null;
     if (!WgKeys.isValidKey(priv) || !WgKeys.isValidKey(pub)) return null;
     return WgKeyPair(privateKey: priv, publicKey: pub);
@@ -119,14 +143,20 @@ class WgIdentity {
   }
 
   static Future<void> save(WgKeyPair pair) async {
+    final raw = jsonEncode({
+      'private': pair.privateKey,
+      'public': pair.publicKey,
+    });
+    await SecretPrefs.writeString(_kSecurePair, raw);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kPrivate, pair.privateKey);
-    await prefs.setString(_kPublic, pair.publicKey);
+    await prefs.remove(_kPrivate);
+    await prefs.remove(_kPublic);
   }
 
   /// Forget the keypair. Used when the subscription is gone for good, so the
   /// next subscriber on this device starts from a clean identity.
   static Future<void> clear() async {
+    await SecretPrefs.deleteString(_kSecurePair);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kPrivate);
     await prefs.remove(_kPublic);

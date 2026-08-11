@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:shared_preferences/shared_preferences.dart';
+import 'secret_prefs.dart';
 
 /// Plan metadata a seller panel returns in the subscription response headers
 /// (the `subscription-userinfo` / `profile-*` conventions shared by 3x-ui,
@@ -172,11 +172,14 @@ class SubInfo {
 /// JSON, mirroring [ProfileStore]. Small and overwritten wholesale on refresh.
 class SubInfoStore {
   static const _kInfos = 'sub_infos_v1';
+  static const _kSecureInfos = 'subscription_info';
 
   /// Load all saved subscription infos. Corrupt entries yield an empty map.
   static Future<Map<String, SubInfo>> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_kInfos);
+    final raw = await SecretPrefs.readString(
+      _kSecureInfos,
+      legacyPreferenceKey: _kInfos,
+    );
     if (raw == null || raw.isEmpty) return {};
     try {
       final map = jsonDecode(raw) as Map<String, dynamic>;
@@ -189,10 +192,13 @@ class SubInfoStore {
 
   /// Overwrite the whole map.
   static Future<void> save(Map<String, SubInfo> infos) async {
-    final prefs = await SharedPreferences.getInstance();
     final encoded =
         jsonEncode(infos.map((url, info) => MapEntry(url, info.toJson())));
-    await prefs.setString(_kInfos, encoded);
+    await SecretPrefs.writeString(
+      _kSecureInfos,
+      encoded,
+      legacyPreferenceKey: _kInfos,
+    );
   }
 
   /// Store (or replace) the info for a single [url], preserving the rest.

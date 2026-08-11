@@ -54,6 +54,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let base = container.appendingPathComponent("tunnel", isDirectory: true)
         let work = base.appendingPathComponent("work", isDirectory: true)
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try protectAndExcludeFromBackup(base)
 
         let options = LibboxSetupOptions()
         options.basePath = base.path
@@ -111,11 +112,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// persisted config.
     private func resolveConfig(options: [String: NSObject]?) throws -> String {
         if let config = options?[TunnelShared.optionConfig] as? String, !config.isEmpty {
-            try? config.write(to: persistedConfigURL(), atomically: true, encoding: .utf8)
+            try persistConfig(config)
             return config
         }
-        if let config = try? String(contentsOf: persistedConfigURL(), encoding: .utf8),
+        let url = try persistedConfigURL()
+        if let config = try? String(contentsOf: url, encoding: .utf8),
            !config.isEmpty {
+            try? protectAndExcludeFromBackup(url)
             return config
         }
         throw TunnelError("No configuration. Connect from the app first.")
@@ -128,6 +131,29 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             throw TunnelError("App group container unavailable")
         }
         return container.appendingPathComponent("tunnel/config.json")
+    }
+
+    private func persistConfig(_ config: String) throws {
+        let url = try persistedConfigURL()
+        try config.write(to: url, atomically: true, encoding: .utf8)
+        try protectAndExcludeFromBackup(url)
+        guard try String(contentsOf: url, encoding: .utf8) == config else {
+            throw TunnelError("Configuration storage verification failed")
+        }
+    }
+
+    /// The PacketTunnel must read the config after reboot once the user has
+    /// unlocked the device. This protection class supports that lifecycle but
+    /// keeps the file device-bound and unavailable before first unlock.
+    private func protectAndExcludeFromBackup(_ url: URL) throws {
+        try FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
+        var protectedURL = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try protectedURL.setResourceValues(values)
     }
 
     /// Subscribes to the core's status stream so we get live traffic counters.

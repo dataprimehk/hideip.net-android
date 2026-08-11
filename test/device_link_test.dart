@@ -78,11 +78,18 @@ void main() {
     test('an import link and a pairing link never parse as each other', () {
       // Both parsers see every incoming link; neither may claim the other's.
       const pair = 'hideip://link?v=1&id=abc';
-      const import = 'hideip://install-config?url=https%3A%2F%2Fe.com%2Fs';
+      const import =
+          'https://hideip.net/add#url=https%3A%2F%2Fe.com%2Fs';
       expect(parseDeepLink(pair), isNull);
       expect(parsePairingLink(pair), isNotNull);
       expect(parseDeepLink(import), isNotNull);
       expect(parsePairingLink(import), isNull);
+      expect(
+        parseDeepLink(
+          'hideip://install-config?url=https%3A%2F%2Fe.com%2Fs',
+        ),
+        isNull,
+      );
     });
   });
 

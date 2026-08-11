@@ -9,6 +9,7 @@ import 'premium.dart';
 import 'profile_store.dart';
 import 'proxy_profile.dart';
 import 'safe_http.dart';
+import 'secret_prefs.dart';
 import 'subscription.dart';
 
 const String provisioningEndpoint = 'https://api.hideip.net:8444';
@@ -208,42 +209,78 @@ class PremiumSub {
   static const _kUuid = 'premium_uuid_v1';
   static const _kToken = 'premium_sub_token_v1';
   static const _kCatalogEpoch = 'premium_catalog_epoch_v1';
+  static const _kSecureUrl = 'premium_subscription_url';
+  static const _kSecureProof = 'premium_purchase_proof';
+  static const _kSecureIdentity = 'premium_catalog_identity';
 
-  static Future<String?> url() async =>
-      (await SharedPreferences.getInstance()).getString(_kUrl);
+  static Future<String?> url() => SecretPrefs.readString(
+    _kSecureUrl,
+    legacyPreferenceKey: _kUrl,
+  );
 
-  static Future<void> saveUrl(String url) async =>
-      (await SharedPreferences.getInstance()).setString(_kUrl, url);
+  static Future<void> saveUrl(String url) => SecretPrefs.writeString(
+    _kSecureUrl,
+    url,
+    legacyPreferenceKey: _kUrl,
+  );
 
   /// The persisted purchase proof, migrating a legacy bare-JWS record.
   static Future<PurchasePayload?> proof() async {
-    final raw = (await SharedPreferences.getInstance()).getString(_kProof);
+    final raw = await SecretPrefs.readString(
+      _kSecureProof,
+      legacyPreferenceKey: _kProof,
+    );
     return raw == null ? null : PurchasePayload.tryParse(raw);
   }
 
-  static Future<void> saveProof(PurchasePayload payload) async =>
-      (await SharedPreferences.getInstance()).setString(
-        _kProof,
+  static Future<void> saveProof(PurchasePayload payload) =>
+      SecretPrefs.writeString(
+        _kSecureProof,
         jsonEncode(payload.toJson()),
+        legacyPreferenceKey: _kProof,
       );
 
   static Future<CatalogIdentity?> identity() async {
+    final secure = await SecretPrefs.readString(_kSecureIdentity);
+    if (secure != null) {
+      try {
+        final decoded = jsonDecode(secure) as Map<String, dynamic>;
+        final uuid = decoded['uuid'] as String?;
+        final token = decoded['token'] as String?;
+        if (uuid != null && uuid.isNotEmpty && token != null && token.isNotEmpty) {
+          return CatalogIdentity(uuid: uuid, subToken: token);
+        }
+      } catch (_) {
+        return null;
+      }
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final uuid = prefs.getString(_kUuid);
     final token = prefs.getString(_kToken);
     if (uuid == null || uuid.isEmpty || token == null || token.isEmpty) {
       return null;
     }
-    return CatalogIdentity(uuid: uuid, subToken: token);
+    final migrated = CatalogIdentity(uuid: uuid, subToken: token);
+    final encoded = jsonEncode({'uuid': uuid, 'token': token});
+    await SecretPrefs.writeString(_kSecureIdentity, encoded);
+    if (await SecretPrefs.readString(_kSecureIdentity) == encoded) {
+      await prefs.remove(_kUuid);
+      await prefs.remove(_kToken);
+    }
+    return migrated;
   }
 
   static Future<void> saveIdentity(CatalogIdentity identity) async {
+    final held = await PremiumSub.identity();
     final prefs = await SharedPreferences.getInstance();
-    final changed =
-        prefs.getString(_kUuid) != identity.uuid ||
-        prefs.getString(_kToken) != identity.subToken;
-    await prefs.setString(_kUuid, identity.uuid);
-    await prefs.setString(_kToken, identity.subToken);
+    final changed = held?.uuid != identity.uuid || held?.subToken != identity.subToken;
+    await SecretPrefs.writeString(
+      _kSecureIdentity,
+      jsonEncode({'uuid': identity.uuid, 'token': identity.subToken}),
+    );
+    await prefs.remove(_kUuid);
+    await prefs.remove(_kToken);
     if (changed) await prefs.remove(_kCatalogEpoch);
   }
 
@@ -262,9 +299,16 @@ class PremiumSub {
   }
 
   static Future<void> clear() async {
+    await SecretPrefs.deleteString(
+      _kSecureUrl,
+      legacyPreferenceKey: _kUrl,
+    );
+    await SecretPrefs.deleteString(
+      _kSecureProof,
+      legacyPreferenceKey: _kProof,
+    );
+    await SecretPrefs.deleteString(_kSecureIdentity);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kUrl);
-    await prefs.remove(_kProof);
     await prefs.remove(_kUuid);
     await prefs.remove(_kToken);
     await prefs.remove(_kCatalogEpoch);

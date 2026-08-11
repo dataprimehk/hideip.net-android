@@ -4,8 +4,11 @@ import 'dart:math';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hideip_vpn/core/wg_keys.dart';
+import 'package:hideip_vpn/core/secret_prefs.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('WgKeys.generate', () {
     test('produces WireGuard-shaped base64 keys', () async {
       final pair = await WgKeys.generate();
@@ -89,6 +92,29 @@ void main() {
 
     test('accepts a real 32-byte key', () {
       expect(WgKeys.isValidKey(base64.encode(List.filled(32, 7))), isTrue);
+    });
+  });
+
+  group('WgIdentity persistence', () {
+    test('migrates a legacy keypair without leaving the private key plaintext',
+        () async {
+      final pair = await WgKeys.generate(random: Random(7));
+      SharedPreferences.setMockInitialValues({
+        'wg_private_key_v1': pair.privateKey,
+        'wg_public_key_v1': pair.publicKey,
+      });
+
+      final loaded = await WgIdentity.load();
+      expect(loaded?.privateKey, pair.privateKey);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.containsKey('wg_private_key_v1'), isFalse);
+      expect(prefs.containsKey('wg_public_key_v1'), isFalse);
+      expect(
+        prefs.getString(
+          SecretPrefs.encryptedPreferenceKey('wireguard_identity'),
+        ),
+        isNot(contains(pair.privateKey)),
+      );
     });
   });
 }

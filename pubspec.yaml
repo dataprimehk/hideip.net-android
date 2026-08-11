@@ -37,6 +37,9 @@ dependencies:
 
   # Persist profiles + selected server across launches.
   shared_preferences: ^2.3.2
+  # Keep local encryption keys in Android Keystore / iOS Keychain. Large
+  # profile blobs stay in preferences only as authenticated ciphertext.
+  flutter_secure_storage: 10.3.1
   # Public-IP lookup (proof the tunnel works).
   http: ^1.2.2
   # Verify signed public server catalogs before using any mirror response.
