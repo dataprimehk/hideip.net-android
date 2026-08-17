@@ -112,6 +112,14 @@ class AppState extends ChangeNotifier {
     return _premium;
   }
 
+  /// Whether the provisioning backend has finished with this subscription:
+  /// the subscription URL is retired and a re-provision with the stored
+  /// purchase proof was refused too. The store can keep reporting the
+  /// entitlement for a while after that, so this is the only thing that tells
+  /// an empty premium list apart from a first provision still in flight.
+  bool get premiumEnded => _premiumEnded && premium.isOn;
+  bool _premiumEnded = false;
+
   String? get toast => _toast;
 
   /// Whether Android's system Always-on VPN is enabled for this app (as last
@@ -276,14 +284,24 @@ class AppState extends ChangeNotifier {
 
   Future<void> _provisionPremiumLocked(PurchasePayload proof) async {
     await PremiumSub.saveProof(proof);
-    final url = await _provisioning.provision(proof);
+    final result = await _provisioning.provision(proof);
+    if (result.status == ProvisionStatus.gone) {
+      // The store still hands out the entitlement, but the backend will not
+      // honour this proof: the same verdict as a subscription that ran out.
+      await _premiumSubscriptionEnded();
+      return;
+    }
+    final url = result.url;
     if (url == null) return;
+    _premiumEnded = false;
     await PremiumSub.saveUrl(url);
     // The linked-devices section keys off this token being present.
     await _loadSubToken();
     final refresh = await _provisioning.refreshProfiles(
       url,
       cachedProfiles: _profiles,
+      // The URL is seconds old; asking the same proof again decides nothing.
+      healLapsed: false,
     );
     final fresh = refresh?.profiles;
     if (fresh != null && fresh.isNotEmpty) {
@@ -425,15 +443,46 @@ class AppState extends ChangeNotifier {
       url,
       cachedProfiles: _profiles,
     );
+    final renewed = refresh?.renewedUrl;
+    if (renewed != null) {
+      // A renewal moved the subscription to a new URL; everything keyed off
+      // the old token has to follow it.
+      await _loadSubToken();
+      await _refreshWireGuard(renewed);
+    }
+    if (refresh?.expired ?? false) {
+      await _premiumSubscriptionEnded();
+      return;
+    }
     final fresh = refresh?.profiles;
     if (fresh == null) return; // unchanged or transient failure: keep cache
     if (fresh.isEmpty && !_profiles.any(isPremiumProfile)) return;
     final epoch = refresh?.catalogEpoch;
     final floor = await PremiumSub.catalogEpoch();
     if (epoch != null && floor != null && epoch < floor) return;
+    if (fresh.isNotEmpty) _premiumEnded = false;
     _applyPremiumProfiles(fresh);
     await _persist();
     if (epoch != null) await PremiumSub.saveCatalogEpoch(epoch);
+  }
+
+  /// The backend refused the stored purchase proof, so the subscription is
+  /// over even where the store has not caught up yet (a cancelled renewal is
+  /// only reported to the app on the store's own schedule). Drop the managed
+  /// profiles and the dead URL but keep the proof: a renewal provisions from
+  /// it, and the empty list then means "expired" instead of "still setting up".
+  Future<void> _premiumSubscriptionEnded() async {
+    _premiumEnded = true;
+    await PremiumSub.forgetSubscription();
+    await _forgetWireGuard();
+    await _loadSubToken();
+    if (_profiles.any(isPremiumProfile)) {
+      _applyPremiumProfiles(const []);
+      await _persist();
+    } else {
+      notifyListeners();
+    }
+    iapLog('[iap] subscription gone server-side: managed profiles removed');
   }
 
   /// Swap the managed premium profiles for [fresh], preserving the user's

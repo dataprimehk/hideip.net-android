@@ -31,9 +31,48 @@ class PremiumProfileRefresh {
   final List<ProxyProfile>? profiles;
   final int? catalogEpoch;
 
-  const PremiumProfileRefresh({this.profiles, this.catalogEpoch});
+  /// The subscription URL a self-heal re-provision issued, already persisted
+  /// here. Set only when the previous one was retired mid-subscription; the
+  /// caller uses it for the state that hangs off the URL (the link token, the
+  /// WireGuard peer).
+  final String? renewedUrl;
+
+  /// The subscription is over rather than merely re-issued: the retired URL
+  /// survived a re-provision with the stored purchase proof, or no proof was
+  /// left to try it with. Only ever true alongside an empty [profiles].
+  final bool expired;
+
+  const PremiumProfileRefresh({
+    this.profiles,
+    this.catalogEpoch,
+    this.renewedUrl,
+    this.expired = false,
+  });
 
   bool get changed => profiles != null;
+}
+
+/// How a `/v1/provision` attempt ended.
+enum ProvisionStatus {
+  /// Credentials came back.
+  ok,
+
+  /// The store proof buys nothing any more (404/410): the subscription really
+  /// has lapsed, whatever the store's cached entitlement still says.
+  gone,
+
+  /// Network trouble, a timeout, or a server-side error. Nothing is decided;
+  /// retry on the next refresh.
+  transient,
+}
+
+/// The outcome of `POST /v1/provision`. [url] is set for [ProvisionStatus.ok]
+/// and null otherwise.
+class ProvisionResult {
+  final ProvisionStatus status;
+  final String? url;
+
+  const ProvisionResult(this.status, [this.url]);
 }
 
 /// Exchanges a verified store purchase for tunnel credentials on hideip.net
@@ -64,11 +103,15 @@ class ProvisioningService {
        _catalogPublicKey = catalogPublicKey ?? catalogVerificationPublicKey,
        _catalogTimeout = catalogTimeout ?? catalogSourceTimeout;
 
-  /// Send the signed purchase proof; returns the subscription URL the profiles
-  /// live at, or null when the backend rejected or was unreachable. The body
-  /// is per-store: iOS keeps `{platform: ios, jws}`; Android sends
+  /// Send the signed purchase proof and get back the subscription URL the
+  /// profiles live at. The body is per-store: iOS keeps
+  /// `{platform: ios, jws}`; Android sends
   /// `{platform: android, purchase_token, product_id}`.
-  Future<String?> provision(PurchasePayload payload) async {
+  ///
+  /// Only 404/410 is a verdict on the purchase; everything else (including a
+  /// 200 without a URL) is transient, so a broken backend never reads as a
+  /// lapsed subscription.
+  Future<ProvisionResult> provision(PurchasePayload payload) async {
     try {
       final resp = await _client
           .post(
@@ -77,11 +120,20 @@ class ProvisioningService {
             body: jsonEncode(provisionBody(payload)),
           )
           .timeout(const Duration(seconds: 20));
-      if (resp.statusCode != 200) return null;
+      if (resp.statusCode == 404 || resp.statusCode == 410) {
+        return const ProvisionResult(ProvisionStatus.gone);
+      }
+      if (resp.statusCode != 200) {
+        return const ProvisionResult(ProvisionStatus.transient);
+      }
       final body = jsonDecode(resp.body) as Map<String, dynamic>;
-      return body['subscription_url'] as String?;
+      final url = body['subscription_url'] as String?;
+      if (url == null || url.isEmpty) {
+        return const ProvisionResult(ProvisionStatus.transient);
+      }
+      return ProvisionResult(ProvisionStatus.ok, url);
     } catch (_) {
-      return null;
+      return const ProvisionResult(ProvisionStatus.transient);
     }
   }
 
@@ -95,9 +147,14 @@ class ProvisioningService {
   /// Prefer a signed public catalog and locally held UUID. The legacy
   /// subscription remains the final fallback and also bootstraps old installs
   /// whose profile cache predates the separately persisted identity.
+  ///
+  /// [healLapsed] spends the stored purchase proof on one re-provision when
+  /// that fallback finds the URL retired; pass false right after a provision,
+  /// where a second one would only ask the same question twice.
   Future<PremiumProfileRefresh?> refreshProfiles(
     String subscriptionUrl, {
     Iterable<ProxyProfile>? cachedProfiles,
+    bool healLapsed = true,
   }) async {
     final storedIdentity = await PremiumSub.identity();
     var identity = storedIdentity;
@@ -140,8 +197,40 @@ class ProvisioningService {
       }
     }
 
-    return _fetchLegacyProfiles(subscriptionUrl);
+    final legacy = await _fetchLegacyProfiles(subscriptionUrl);
+    if (legacy == null || !legacy.expired || !healLapsed) return legacy;
+    return _healRetiredSubscription();
   }
+
+  /// The subscription URL is retired server-side. A renewal issues a new one
+  /// while the old one is already dead, so spend the stored proof on exactly
+  /// one re-provision before calling the subscription over: the stores keep
+  /// charging across that gap, and only a backend that refuses the proof
+  /// itself is an expiry.
+  Future<PremiumProfileRefresh?> _healRetiredSubscription() async {
+    final proof = await PremiumSub.proof();
+    if (proof == null) return _lapsed;
+    final result = await provision(proof);
+    final url = result.url;
+    if (url == null) {
+      // Only an outright refusal decides anything; a backend that could not
+      // answer leaves the cache in place for the next refresh to retry.
+      return result.status == ProvisionStatus.gone ? _lapsed : null;
+    }
+    await PremiumSub.saveUrl(url);
+    final healed = await _fetchLegacyProfiles(url);
+    // A URL that is issued and gone in the same breath leaves nothing to try;
+    // a transient failure on it keeps the cache, as everywhere else.
+    if (healed == null) return PremiumProfileRefresh(renewedUrl: url);
+    return PremiumProfileRefresh(
+      profiles: healed.profiles,
+      expired: healed.expired,
+      renewedUrl: url,
+    );
+  }
+
+  /// The subscription is over: no servers, and the caller may say so.
+  static const _lapsed = PremiumProfileRefresh(profiles: [], expired: true);
 
   Future<PremiumProfileRefresh?> _fetchLegacyProfiles(
     String subscriptionUrl,
@@ -151,9 +240,7 @@ class ProvisioningService {
         Uri.parse(subscriptionUrl),
         headers: subscriptionHeaders,
       );
-      if (resp.statusCode == 404 || resp.statusCode == 410) {
-        return const PremiumProfileRefresh(profiles: []);
-      }
+      if (resp.statusCode == 404 || resp.statusCode == 410) return _lapsed;
       if (resp.statusCode != 200) return null;
       // Everything this URL serves is subscription-managed by definition;
       // the flag (not the name) is what marks a profile as ours, so the
@@ -298,19 +385,26 @@ class PremiumSub {
     await prefs.setInt(_kCatalogEpoch, epoch);
   }
 
-  static Future<void> clear() async {
+  /// Drop the subscription URL and the catalog identity bound to it, keeping
+  /// the purchase proof: after a subscription the backend has retired, that
+  /// proof is the only thing a renewal can be provisioned from.
+  static Future<void> forgetSubscription() async {
     await SecretPrefs.deleteString(
       _kSecureUrl,
       legacyPreferenceKey: _kUrl,
-    );
-    await SecretPrefs.deleteString(
-      _kSecureProof,
-      legacyPreferenceKey: _kProof,
     );
     await SecretPrefs.deleteString(_kSecureIdentity);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kUuid);
     await prefs.remove(_kToken);
     await prefs.remove(_kCatalogEpoch);
+  }
+
+  static Future<void> clear() async {
+    await forgetSubscription();
+    await SecretPrefs.deleteString(
+      _kSecureProof,
+      legacyPreferenceKey: _kProof,
+    );
   }
 }

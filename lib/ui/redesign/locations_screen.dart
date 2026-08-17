@@ -138,6 +138,19 @@ class LocationsScreen extends StatelessWidget {
                   HipListGroup(children: [
                     for (final l in premiumLocs) serverRow(l),
                   ])
+                else if (hasSub && state.premiumEnded)
+                  // The backend is finished with this subscription; waiting on
+                  // servers that will never arrive would be the wrong story.
+                  HipListGroup(children: [
+                    HipListRow(
+                      leading: HipFlag(
+                          cc: '',
+                          child: Icon(Icons.error_outline,
+                              size: 19, color: Hip.muted2)),
+                      title: 'Subscription expired',
+                      subtitle: 'Renew it to get your premium locations back',
+                    ),
+                  ])
                 else if (hasSub)
                   // Subscribed, but the profiles have not landed yet (first
                   // provision in flight, or offline): keep the place visible.
