@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/deep_link.dart';
+import '../../core/import_payload.dart';
 import '../../core/location.dart';
 import '../../state/app_state.dart';
 import 'detail_screen.dart';
@@ -104,6 +105,7 @@ class _HipShellState extends State<HipShell>
   String? _importInitialText; // consumed by the next import build
   String? _pendingLinkText; // held until the shell is past onboarding
   DeepLinkPairing? _pendingPairing; // same, for a device-link approval
+  final DeepLinkOnce _once = DeepLinkOnce(); // same link delivered twice
 
   // iOS edge-swipe back: with no Navigator stack there is no system gesture,
   // so a drag that starts at the left edge maps onto the same hierarchy the
@@ -151,6 +153,9 @@ class _HipShellState extends State<HipShell>
   void _onDeepLink(Uri uri) {
     if (!mounted) return;
     final raw = uri.toString();
+    // A cold start reads the launch link and the stream replays it; the same
+    // tap must not open two importers.
+    if (!_once.accept(raw)) return;
     // Onboarding is a modal flow; anything that arrives during it waits.
     final duringOnboarding = _screen == HipScreen.onboarding ||
         (_screen == null && !widget.state.prefs.onboarded);
@@ -169,6 +174,14 @@ class _HipShellState extends State<HipShell>
 
     final parsed = parseDeepLink(raw);
     if (parsed == null) return; // not a hideip import link
+    // The payload is whatever whoever built the link decided to put there, so
+    // it passes the importer's own whitelist before it reaches the screen. A
+    // refusal says only that, never what the link held: the payload is a
+    // credential and it stays out of the toast as much as out of any log.
+    if (classifyImportPayload(parsed.text) == null) {
+      widget.state.showToast('That link carries nothing we can import');
+      return;
+    }
     if (duringOnboarding) {
       _pendingLinkText = parsed.text;
       return;

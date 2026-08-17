@@ -9,6 +9,27 @@ import 'proxy_profile.dart';
 ///
 /// Throws [ProfileParseException] on anything it cannot understand.
 class ShareLinkParser {
+  /// Every scheme [parse] dispatches on. Anything deciding whether a payload
+  /// is importable at all (the importer's detection, an incoming deep link)
+  /// whitelists against this one set, so a protocol added below reaches all
+  /// of those paths at once and none of them can drift into accepting a
+  /// scheme the parser would refuse.
+  static const Set<String> supportedSchemes = {
+    'vless',
+    'vmess',
+    'ss',
+    'trojan',
+    'hysteria2',
+    'hy2',
+    'tuic',
+    'anytls',
+    'socks',
+    'socks5',
+    'socks5h',
+    'http',
+    'https',
+  };
+
   /// Parse a single trimmed link. Returns null for empty/comment lines so
   /// callers iterating a subscription can skip them cleanly.
   static ProxyProfile? parse(String raw) {

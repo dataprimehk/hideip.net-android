@@ -3,7 +3,8 @@
 // Two shapes are accepted, and the difference between them is a migration in
 // progress rather than a preference.
 //
-//   1. https://hideip.net/add#url=<encoded>&name=<optional>   -- the target.
+//   1. https://hideip.net/import#url=<encoded>&name=<optional>  -- the target.
+//      (`/add` is the same link under the older name and stays accepted.)
 //      An app link the operating system verifies against hideip.net, so no
 //      other app can claim it, and the payload rides in the fragment, which a
 //      browser never puts in the request line or a server log.
@@ -117,7 +118,10 @@ DeepLinkImport? _fromAppLink(Uri uri) {
   final host = uri.host.toLowerCase();
   if (host != 'hideip.net' && host != 'www.hideip.net') return null;
   final path = uri.path.toLowerCase();
-  if (path != '/add' && path != '/add/') return null;
+  if (path != '/import' && path != '/import/' &&
+      path != '/add' && path != '/add/') {
+    return null;
+  }
 
   // The fragment is where a payload belongs, but a link that came back
   // through something that dropped the fragment still has the query.
@@ -209,4 +213,34 @@ String _tryDecode(String value) {
 String? _clean(String? value) {
   final trimmed = value?.trim();
   return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
+
+/// Drops a link the app has already acted on.
+///
+/// The same URI reaches the app more than once by design: a cold start reads
+/// it from the launch intent and the link stream replays it, and a launcher
+/// may redeliver the VIEW intent when the app is brought back. Acting on each
+/// copy would throw a second importer over the one the user is reading, and
+/// on a link that opens an approval sheet it would stack two sheets.
+///
+/// A link the user taps again later is a fresh request, so the guard only
+/// covers the burst.
+class DeepLinkOnce {
+  static const Duration window = Duration(seconds: 10);
+
+  String? _last;
+  DateTime? _seenAt;
+
+  /// True when [raw] should be handled; false for a repeat of the link that
+  /// was just handled.
+  bool accept(String raw, {DateTime? now}) {
+    final at = now ?? DateTime.now();
+    final seenAt = _seenAt;
+    if (raw == _last && seenAt != null && at.difference(seenAt) < window) {
+      return false;
+    }
+    _last = raw;
+    _seenAt = at;
+    return true;
+  }
 }

@@ -40,16 +40,24 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
             <!-- Where import links are headed: an app link Android verifies
-                 against hideip.net, so no other app can claim it, with the
-                 payload in the fragment where no request line or server log
-                 ever sees it. Verification needs the real Play App Signing
-                 SHA-256 in the site's assetlinks.json; until that is
-                 published this filter is inert and the scheme below carries
-                 everything. -->
+                 against the assetlinks.json published on hideip.net, so no
+                 other app can claim it, with the payload in the fragment
+                 where no request line or server log ever sees it. /import is
+                 the path the site emits; /add is the same link under its
+                 older name, kept claimed for the seller snippets already
+                 copied into third-party panels. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="hideip.net"
+                    android:pathPrefix="/import"/>
+                <data
+                    android:scheme="https"
+                    android:host="www.hideip.net"
+                    android:pathPrefix="/import"/>
                 <data
                     android:scheme="https"
                     android:host="hideip.net"

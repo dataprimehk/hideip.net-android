@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_version.dart';
+import '../../core/deep_link.dart';
 import '../../core/haptics.dart';
+import '../../core/import_payload.dart';
 import '../../core/location.dart';
 import '../../core/ping.dart';
 import '../../core/proxy_profile.dart';
@@ -95,34 +97,35 @@ class _ImportScreenState extends State<ImportScreen> {
 
   // --- input detection -------------------------------------------------------
 
+  static const _protocolNames = {
+    'vless': 'VLESS',
+    'vmess': 'VMess',
+    'ss': 'Shadowsocks',
+    'trojan': 'Trojan',
+    'hysteria2': 'Hysteria2',
+    'hy2': 'Hysteria2',
+    'tuic': 'TUIC',
+    'anytls': 'AnyTLS',
+    'socks': 'SOCKS',
+    'socks5': 'SOCKS',
+    'socks5h': 'SOCKS',
+  };
+
+  /// The detection line, plus whether the input is a subscription. The
+  /// whitelist behind it is shared with the deep-link path, so a link the
+  /// site sends and text pasted by hand are judged by one rule.
   static (String, bool)? _detect(String input) {
-    final t = input.trim();
-    if (t.isEmpty) return null;
-    final schemes = {
-      'vless': 'VLESS link detected',
-      'vmess': 'VMess link detected',
-      'ss': 'Shadowsocks link detected',
-      'trojan': 'Trojan link detected',
-      'hysteria2': 'Hysteria2 link detected',
-      'hy2': 'Hysteria2 link detected',
-      'tuic': 'TUIC link detected',
-      'anytls': 'AnyTLS link detected',
-      'socks': 'SOCKS link detected',
-      'socks5': 'SOCKS link detected',
+    final payload = classifyImportPayload(input);
+    if (payload == null) return null;
+    return switch (payload.kind) {
+      ImportPayloadKind.shareLink => (
+          '${_protocolNames[payload.scheme] ?? payload.scheme!.toUpperCase()} '
+              'link detected',
+          false
+        ),
+      ImportPayloadKind.subscriptionUrl => ('Subscription link detected', true),
+      ImportPayloadKind.subscriptionBlob => ('Subscription content detected', true),
     };
-    final m = RegExp(r'^([a-z0-9]+)://', caseSensitive: false).firstMatch(t);
-    if (m != null) {
-      final scheme = m.group(1)!.toLowerCase();
-      if (schemes.containsKey(scheme)) return (schemes[scheme]!, false);
-      if (scheme == 'http' || scheme == 'https') {
-        return ('Subscription link detected', true);
-      }
-    }
-    // Multi-line or base64 blobs are treated as subscription bodies.
-    if (t.contains('\n') || RegExp(r'^[A-Za-z0-9+/=_\-]{40,}$').hasMatch(t)) {
-      return ('Subscription content detected', true);
-    }
-    return null;
   }
 
   // --- the import pipeline ----------------------------------------------------
@@ -238,12 +241,17 @@ class _ImportScreenState extends State<ImportScreen> {
 
   // --- quick actions -----------------------------------------------------------
 
+  /// Takes the payload out of one of our own import links. The QR a desktop
+  /// browser shows is an app link, and scanning or pasting it here would
+  /// otherwise be read as a subscription URL pointing at hideip.net itself.
+  static String _unwrap(String input) => parseDeepLink(input)?.text ?? input;
+
   Future<void> _scanQr() async {
     final scanned = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const QrScanScreen()),
     );
     if (scanned != null && scanned.isNotEmpty) {
-      _text.text = scanned;
+      _text.text = _unwrap(scanned);
     }
   }
 
@@ -254,7 +262,7 @@ class _ImportScreenState extends State<ImportScreen> {
       setState(() => _error = 'The clipboard is empty.');
       return;
     }
-    _text.text = t;
+    _text.text = _unwrap(t);
   }
 
   void _back() {
