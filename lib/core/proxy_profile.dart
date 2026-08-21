@@ -16,6 +16,13 @@ class ProxyProfile {
   /// already carry their own "tag" and are added to the config as-is.
   final List<Map<String, dynamic>> extraOutbounds;
 
+  /// True when [outbound] is a sing-box `endpoints[]` entry rather than an
+  /// `outbounds[]` one, which is where WireGuard lives from sing-box 1.11 on:
+  /// an endpoint both receives from peers and sends, so it is not an outbound.
+  /// The tag works the same either way, so `route.final` still points at it;
+  /// only the array it is placed in differs. See [SingboxConfig.build].
+  final bool isEndpoint;
+
   /// Country code geolocated from [server] when the name reveals no location
   /// (most bare-IP links). Null until (and unless) that lookup succeeds.
   final String? cc;
@@ -39,6 +46,7 @@ class ProxyProfile {
     required this.port,
     required this.outbound,
     this.extraOutbounds = const [],
+    this.isEndpoint = false,
     this.cc,
     this.premium = false,
     this.subUrl,
@@ -52,6 +60,7 @@ class ProxyProfile {
         port: port,
         outbound: outbound,
         extraOutbounds: extraOutbounds,
+        isEndpoint: isEndpoint,
         cc: cc ?? this.cc,
         premium: premium ?? this.premium,
         subUrl: subUrl ?? this.subUrl,

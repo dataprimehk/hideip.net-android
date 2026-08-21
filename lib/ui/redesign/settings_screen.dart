@@ -127,15 +127,16 @@ class SettingsScreen extends StatelessWidget {
                     },
                   ),
                 ),
-                // Speed mode only makes sense with a subscription behind it:
-                // WireGuard runs on the hideip.net fleet, not on a user's own
-                // imported servers.
+                // Speed mode rides on the hideip.net fleet, which is what the
+                // subscription pays for. The copy says "hideip.net locations"
+                // on purpose: WireGuard itself is free, anyone can import
+                // their own through Add connection.
                 if (premium.isOn)
                   HipListRow(
                     title: 'Speed mode',
                     subtitle: state.speedDeviceLimit
                         ? 'Already set up on 5 devices; turn it off on one of them'
-                        : 'WireGuard where the network allows it',
+                        : 'WireGuard on hideip.net locations, where the network allows it',
                     trailing: HipToggle(
                       on: prefs.speedMode,
                       onChanged: (v) async {
@@ -146,6 +147,18 @@ class SettingsScreen extends StatelessWidget {
                         }
                       },
                     ),
+                  )
+                else if (kPlansAvailable && state.plansOffered)
+                  HipListRow(
+                    title: 'Speed mode',
+                    titleBadge: HipBadge.blue('New'),
+                    // The second clause matters: a lock next to the word
+                    // WireGuard would otherwise read as "WireGuard is paid".
+                    subtitle: 'Part of Premium. WireGuard on hideip.net '
+                        'locations; importing your own config is free.',
+                    trailing:
+                        Icon(Icons.lock_outline, size: 17, color: Hip.muted2),
+                    onTap: () => nav.openPaywall(HipScreen.settings),
                   ),
                 if (defaultTargetPlatform == TargetPlatform.android)
                   _AndroidAlwaysOnRows(state: state),
@@ -154,6 +167,8 @@ class SettingsScreen extends StatelessWidget {
               HipListGroup(children: [
                 HipListRow(
                   title: 'Add connection',
+                  subtitle:
+                      'From any provider, or your own WireGuard server',
                   trailing: Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
                   onTap: () => nav.openImport(),
                 ),

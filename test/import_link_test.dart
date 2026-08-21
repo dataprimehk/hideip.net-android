@@ -66,7 +66,9 @@ void main() {
         'data:text/html,<script>x</script>',
         'ftp://host/config',
         'content://com.other.app/files/config',
-        'wireguard://host:51820',
+        // Was wireguard:// until the parser learned to build one; any scheme
+        // used here has to be one the importer still has no branch for.
+        'ssh://host:22',
       ]) {
         expect(admitted(appLink(payload)), isNull, reason: payload);
         expect(admitted(schemeLink(payload)), isNull, reason: payload);

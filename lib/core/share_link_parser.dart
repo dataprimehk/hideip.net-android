@@ -1,11 +1,16 @@
 import 'dart:convert';
 
 import 'proxy_profile.dart';
+import 'wg_import.dart';
 
 /// Parses a single proxy share link (`vless://`, `vmess://`, `ss://`,
 /// `trojan://`, `hysteria2://`, `tuic://`, `anytls://`, `socks://`,
 /// `http(s)://` proxy; ShadowTLS via `ss://` plugin) into a [ProxyProfile]
 /// whose [ProxyProfile.outbound] is a sing-box (1.13.x) outbound object.
+///
+/// A user's own WireGuard configuration is handled too, either as a
+/// `wireguard://` link or as the whole `[Interface]` / `[Peer]` file; that one
+/// produces an `endpoints[]` entry instead. See [WgImport].
 ///
 /// Throws [ProfileParseException] on anything it cannot understand.
 class ShareLinkParser {
@@ -28,15 +33,21 @@ class ShareLinkParser {
     'socks5h',
     'http',
     'https',
+    'wireguard',
+    'wg',
   };
 
   /// Parse a single trimmed link. Returns null for empty/comment lines so
   /// callers iterating a subscription can skip them cleanly.
   static ProxyProfile? parse(String raw) {
     final link = raw.trim();
-    if (link.isEmpty || link.startsWith('#') || link.startsWith('//')) {
-      return null;
-    }
+    if (link.isEmpty) return null;
+    // A WireGuard file is a whole document rather than a link, and it may open
+    // with a comment, so it is recognized before the comment-line skip below.
+    // One line of a subscription can never satisfy the check, which needs both
+    // an [Interface] and a [Peer] header.
+    if (WgImport.looksLikeConfig(link)) return WgImport.parseConfig(link);
+    if (link.startsWith('#') || link.startsWith('//')) return null;
     final scheme = link.split('://').first.toLowerCase();
     switch (scheme) {
       case 'vless':
@@ -61,6 +72,9 @@ class ShareLinkParser {
       case 'http':
       case 'https':
         return _parseHttp(link);
+      case 'wireguard':
+      case 'wg':
+        return WgImport.parseLink(link);
       default:
         throw ProfileParseException('Unsupported scheme "$scheme"');
     }

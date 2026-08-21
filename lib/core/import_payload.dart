@@ -1,4 +1,5 @@
 import 'share_link_parser.dart';
+import 'wg_import.dart';
 
 /// What a piece of import text is. The three shapes the importer knows how to
 /// turn into servers: a single share link, a subscription URL to fetch, or a
@@ -44,6 +45,13 @@ final RegExp _blobRe = RegExp(r'^[A-Za-z0-9+/=_\-]{40,}$');
 ImportPayload? classifyImportPayload(String raw) {
   final text = raw.trim();
   if (text.isEmpty) return null;
+
+  // A WireGuard file is multi-line but describes exactly one server, so it is
+  // judged before the rule below or it would be read as a provider's body and
+  // fail with an error about links.
+  if (WgImport.looksLikeConfig(text)) {
+    return const ImportPayload(ImportPayloadKind.shareLink, 'wireguard');
+  }
 
   // More than one line is a provider's body even when the first line is a
   // link: read as a single link, everything after the first server would be

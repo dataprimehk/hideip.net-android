@@ -299,6 +299,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
       child: Column(children: [
         row('Works on filtered networks', 'stealth by default'),
         row('All locations', 'every location included'),
+        row('Speed mode', 'WireGuard on every hideip.net location'),
         row('No logs', 'nothing to record or sell'),
         row('No account', 'no email, no login'),
       ]),

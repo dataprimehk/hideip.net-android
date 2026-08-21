@@ -62,8 +62,12 @@ class SingboxConfig {
           'stack': stack,
         },
       ],
+      // A WireGuard profile is an `endpoints[]` entry, not an outbound (see
+      // [ProxyProfile.isEndpoint]). The key stays "endpoints" only when there
+      // is one, because sing-box rejects an empty array here.
+      if (profile.isEndpoint) 'endpoints': [profile.taggedOutbound(proxyTag)],
       'outbounds': [
-        profile.taggedOutbound(proxyTag),
+        if (!profile.isEndpoint) profile.taggedOutbound(proxyTag),
         ...profile.extraOutbounds,
         {'type': 'direct', 'tag': 'direct'},
       ],

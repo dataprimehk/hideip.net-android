@@ -14,6 +14,7 @@ import '../../core/safe_http.dart';
 import '../../core/share_link_parser.dart';
 import '../../core/sub_info.dart';
 import '../../core/subscription.dart';
+import '../../core/wg_import.dart';
 import '../../state/app_state.dart';
 import '../brand.dart';
 import '../qr_scan_screen.dart';
@@ -109,6 +110,8 @@ class _ImportScreenState extends State<ImportScreen> {
     'socks': 'SOCKS',
     'socks5': 'SOCKS',
     'socks5h': 'SOCKS',
+    'wireguard': 'WireGuard',
+    'wg': 'WireGuard',
   };
 
   /// The detection line, plus whether the input is a subscription. The
@@ -117,6 +120,11 @@ class _ImportScreenState extends State<ImportScreen> {
   static (String, bool)? _detect(String input) {
     final payload = classifyImportPayload(input);
     if (payload == null) return null;
+    // A pasted WireGuard file is a share link to everything downstream, but
+    // calling it a link on screen would not match what the person just pasted.
+    if (WgImport.looksLikeConfig(input)) {
+      return ('WireGuard configuration detected', false);
+    }
     return switch (payload.kind) {
       ImportPayloadKind.shareLink => (
           '${_protocolNames[payload.scheme] ?? payload.scheme!.toUpperCase()} '
@@ -332,7 +340,7 @@ class _ImportScreenState extends State<ImportScreen> {
           decoration: InputDecoration(
             border: InputBorder.none,
             hintText:
-                'Paste anything: a vless:// or vmess:// link, a subscription URL, or a config file’s contents.',
+                'Paste anything: a vless:// or vmess:// link, a subscription URL, or your own WireGuard config.',
             hintStyle: Hip.sans(400, 13.5, color: Hip.muted2, height: 1.5),
           ),
         ),
@@ -358,7 +366,8 @@ class _ImportScreenState extends State<ImportScreen> {
                 onTap: _pasteClipboard)),
       ]),
       const HipSubnote(
-          'Works with links from any provider: VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, subscriptions.'),
+          'Works with links from any provider: VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, subscriptions. '
+          'A WireGuard config of your own works too, pasted or scanned; no subscription needed.'),
     ]);
   }
 

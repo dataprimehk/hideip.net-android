@@ -188,7 +188,7 @@ class LocationsScreen extends StatelessWidget {
               if (userLocs.isEmpty)
                 HipCard(
                   child: Text(
-                    'No servers yet. Add a connection from your provider to get started.',
+                    'No servers yet. A connection from your provider, or your own WireGuard config, can be added at any time.',
                     style: Hip.sans(400, 13.5, color: Hip.muted, height: 1.5),
                   ),
                 )
