@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -5,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
+import '../../core/cc_iso.dart';
 import '../../core/haptics.dart';
 import '../../core/ip_lookup.dart';
 import '../../core/location.dart';
@@ -86,26 +88,6 @@ Offset _project(double lat, double lon) {
 final _yTop = _project(84, 0).dy; // pan bounds, matching the prototype
 final _yBottom = _project(-60, 0).dy;
 
-/// ISO 3166 alpha-2 -> numeric ids used by the world-atlas geometry, for
-/// highlighting countries that have a node. Covers the countries the
-/// location parser recognizes.
-const _ccIso = {
-  'AE': '784', 'AL': '008', 'AM': '051', 'AR': '032', 'AT': '040',
-  'AU': '036', 'AZ': '031', 'BA': '070', 'BE': '056', 'BG': '100',
-  'BR': '076', 'BY': '112', 'CA': '124', 'CH': '756', 'CL': '152',
-  'CO': '170', 'CY': '196', 'CZ': '203', 'DE': '276', 'DK': '208',
-  'EE': '233', 'EG': '818', 'ES': '724', 'FI': '246', 'FR': '250',
-  'GB': '826', 'GE': '268', 'GR': '300', 'HK': '344', 'HR': '191',
-  'HU': '348', 'ID': '360', 'IE': '372', 'IL': '376', 'IN': '356',
-  'IS': '352', 'IT': '380', 'JP': '392', 'KR': '410', 'KZ': '398',
-  'LT': '440', 'LU': '442', 'LV': '428', 'MD': '498', 'ME': '499',
-  'MK': '807', 'MT': '470', 'MX': '484', 'MY': '458', 'NL': '528',
-  'NO': '578', 'NZ': '554', 'PH': '608', 'PL': '616', 'PT': '620',
-  'RO': '642', 'RS': '688', 'RU': '643', 'SA': '682', 'SE': '752',
-  'SG': '702', 'SI': '705', 'SK': '703', 'TH': '764', 'TR': '792',
-  'TW': '158', 'UA': '804', 'US': '840', 'VN': '704', 'ZA': '710',
-};
-
 /// Countries that already carry a hideip.net exit node, as the ISO 3166
 /// numeric ids the geometry is keyed by.
 ///
@@ -115,28 +97,60 @@ const _ccIso = {
 /// away from everyone in it.
 Set<String> managedCountryIds(Iterable<Location> locations) => {
       for (final l in locations)
-        if (l.premium && _ccIso[l.cc] != null) _ccIso[l.cc]!,
+        if (l.premium) ?ccNumeric(l.cc),
     };
 
 /// One-shot gate for the notification pre-prompt (C4).
 ///
 /// The explanation is offered after the first vote of a cycle and never at
-/// launch, only while the system has never been asked, and only once.
+/// launch, only while the system has never been asked, and only once per
+/// install. [due] stays a plain synchronous decision over values; the two
+/// hooks are what make it survive a restart, and a test can pass its own.
 class VotePrimerGate {
+  VotePrimerGate({
+    Future<bool> Function()? readSeen,
+    Future<void> Function()? writeSeen,
+  })  : _readSeen = readSeen ?? _prefSeen,
+        _writeSeen = writeSeen ?? _markPrefSeen;
+
+  final Future<bool> Function() _readSeen;
+  final Future<void> Function() _writeSeen;
+
   bool _shown = false;
+  bool _loaded = false;
+
+  /// Reads what a previous run decided. Awaited before [due]; the second call
+  /// and later are free.
+  Future<void> load() async {
+    if (_loaded) return;
+    _loaded = true;
+    if (await _readSeen()) _shown = true;
+  }
 
   bool due({required bool firstOfCycle, required NotifPerm perm}) {
     if (_shown || !firstOfCycle || perm != NotifPerm.ask) return false;
     _shown = true;
+    unawaited(_writeSeen());
     return true;
   }
 
+  static Future<bool> _prefSeen() async =>
+      (await UiPrefs.load()).votePrimerSeen;
+
+  static Future<void> _markPrefSeen() async {
+    final prefs = await UiPrefs.load();
+    await prefs.copyWith(votePrimerSeen: true).save();
+  }
+
   @visibleForTesting
-  void resetForTesting() => _shown = false;
+  void resetForTesting() {
+    _shown = false;
+    _loaded = false;
+  }
 }
 
 /// Shared because the map is rebuilt on every visit to Home and the offer is
-/// once per install session, not once per mount.
+/// once per install, not once per mount.
 final votePrimer = VotePrimerGate();
 
 class _Country {
@@ -242,10 +256,6 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
   NotifPerm? _notifPerm;
   bool _notifPermLoading = false;
 
-  // A winning location keeps its trophy until the user has connected to it
-  // once; connecting is what turns the reward back into an ordinary server.
-  final Set<int> _claimedWins = {};
-
   // Invite pulse: once per ambient cycle one visible country without a node
   // glows briefly, so the map itself says plain land is tappable (voting).
   String? _pulseId;
@@ -314,12 +324,6 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
   void didUpdateWidget(covariant WorldMap old) {
     super.didUpdateWidget(old);
     if (!widget.open && old.open) _entered = false;
-    // Connecting to a winner is what retires its trophy.
-    if (widget.conn == MarkState.connected &&
-        old.conn != MarkState.connected &&
-        widget.active != null) {
-      _claimedWins.add(widget.active!.index);
-    }
     // A state change re-frames the camera; drop the vote card rather than
     // have it ride over the transition. Voting itself works in any state.
     if (widget.conn != old.conn) _voteSel = null;
@@ -387,18 +391,14 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
 
   Set<String> get _managedIds => managedCountryIds(widget.locations);
 
-  /// Pin indexes that currently carry the trophy: the vote service names the
-  /// countries whose vote won, and [Location.won] carries the same fact once
-  /// the state layer knows it.
-  Set<int> get _wonIndexes {
-    final won = _votes.won;
-    return {
-      for (final l in widget.locations)
-        if (!_claimedWins.contains(l.index) &&
-            (l.won || won.contains(_ccIso[l.cc] ?? '')))
-          l.index,
-    };
-  }
+  /// Pin indexes that currently carry the trophy. The state layer is the one
+  /// place that decides it: it matches the vote result against the location's
+  /// country and retires the trophy once the user has connected there, so
+  /// every screen tells the same story.
+  Set<int> get _wonIndexes => {
+        for (final l in widget.locations)
+          if (l.won) l.index,
+      };
 
   _View get _current {
     if (_cam.isAnimating && _from != null && _to != null) {
@@ -552,6 +552,8 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
     final perm = await _readNotifPerm();
     if (!mounted) return;
     setState(() => _notifPerm = perm);
+    await votePrimer.load();
+    if (!mounted) return;
     if (!votePrimer.due(firstOfCycle: firstOfCycle, perm: perm)) return;
     // The sheet follows the vote rather than interrupting it: the panel gets
     // to show its thanks line first.

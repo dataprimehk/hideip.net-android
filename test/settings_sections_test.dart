@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hideip_vpn/core/notifications.dart';
 import 'package:hideip_vpn/core/ui_prefs.dart';
 import 'package:hideip_vpn/ui/redesign/hip.dart';
+import 'package:hideip_vpn/ui/brand.dart';
 import 'package:hideip_vpn/ui/redesign/settings_screen.dart';
+import 'package:hideip_vpn/ui/strings.dart';
 
 Widget _host(Widget child) =>
     MaterialApp(home: Scaffold(body: SingleChildScrollView(child: child)));
@@ -215,6 +217,57 @@ void main() {
       expect(find.text('Try 7 days free'), findsOneWidget);
       expect(find.textContaining(r'Then $29.99 per year. Cancel anytime.'),
           findsOneWidget);
+    });
+  });
+
+  group('the billing line puts its date in mono', () {
+    List<TextSpan> runs(InlineSpan span) =>
+        (span as TextSpan).children!.cast<TextSpan>();
+
+    test('the sentence stays in the body face, the date does not', () {
+      final line = runs(monoWithin(
+          S.setPremiumTrial('Sep 5, 2026'), const ['Sep 5, 2026']));
+
+      expect(line.map((r) => r.text).join(), 'Free trial; ends Sep 5, 2026');
+      expect(line.first.text, 'Free trial; ends ');
+      expect(line.first.style!.fontFamily, Brand.bodyFont);
+      expect(line.last.text, 'Sep 5, 2026');
+      expect(line.last.style!.fontFamily, Brand.monoFont);
+    });
+
+    test('the plan name is a word, so it keeps the body face', () {
+      final line = runs(monoWithin(
+          S.setPremiumActive('Yearly', 'Sep 5, 2026'), const ['Sep 5, 2026']));
+
+      expect(line.map((r) => r.text).join(), 'Yearly plan; renews Sep 5, 2026');
+      expect(line.first.style!.fontFamily, Brand.bodyFont);
+      expect(line.last.style!.fontFamily, Brand.monoFont);
+    });
+
+    test('a line with no number is one plain run', () {
+      final line = runs(monoWithin(S.setPremiumEnded, const []));
+
+      expect(line, hasLength(1));
+      expect(line.single.text, 'Subscription ended; not renewing');
+      expect(line.single.style!.fontFamily, Brand.bodyFont);
+    });
+
+    test('a date in front of the sentence still comes out mono', () {
+      // What a translation is free to do with the same constant.
+      final line = runs(monoWithin('Sep 5, 2026 is when it renews',
+          const ['Sep 5, 2026']));
+
+      expect(line.first.text, 'Sep 5, 2026');
+      expect(line.first.style!.fontFamily, Brand.monoFont);
+      expect(line.last.text, ' is when it renews');
+      expect(line.last.style!.fontFamily, Brand.bodyFont);
+    });
+
+    test('a fragment the line does not contain is skipped', () {
+      final line = runs(monoWithin(S.setPremiumNone, const ['Sep 5, 2026']));
+
+      expect(line, hasLength(1));
+      expect(line.single.text, 'Not subscribed; 7 days free to start');
     });
   });
 }

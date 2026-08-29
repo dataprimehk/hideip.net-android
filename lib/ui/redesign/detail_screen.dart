@@ -2,14 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config_redaction.dart';
 import '../../core/location.dart';
 import '../../core/ping.dart';
 import '../../core/sensitive_clipboard.dart';
-import '../../core/sub_info.dart';
-import '../../core/user_subscription.dart';
 import '../../core/wg_speed_mode.dart';
 import '../../state/app_state.dart';
 import '../brand.dart';
@@ -18,115 +15,21 @@ import 'hip.dart';
 import 'hip_sheet.dart';
 import 'shell.dart';
 
-/// The names the user gave their own servers.
+/// The label to show for [l]: the name the user gave the server, or the one
+/// it was imported under.
 ///
-/// The name the provider sent stays on the profile and is still shown under
-/// the field, so renaming never loses it. Keyed by `Location.id`
-/// (`host:port`), which survives a subscription refresh reordering the list.
-class ServerNames extends ChangeNotifier {
-  ServerNames._();
-
-  static final ServerNames instance = ServerNames._();
-
-  static const _key = 'server_names_v1';
-
-  Map<String, String> _names = const {};
-  bool _loaded = false;
-
-  /// Reads the stored names once. Safe to call from every build path; the
-  /// second call and later are free.
-  Future<void> ensureLoaded() async {
-    if (_loaded) return;
-    _loaded = true;
-    final prefs = await _prefs();
-    final raw = prefs?.getString(_key);
-    if (raw == null) return;
-    final decoded = jsonDecode(raw);
-    if (decoded is! Map) return;
-    _names = {
-      for (final e in decoded.entries)
-        if (e.key is String && e.value is String)
-          e.key as String: e.value as String,
-    };
-    notifyListeners();
-  }
-
-  /// The label to show for [location]: the user's name if there is one, the
-  /// parsed one otherwise.
-  String nameFor(Location location) => _names[location.id] ?? location.city;
-
-  Future<void> rename(Location location, String name) async {
-    final trimmed = name.trim();
-    final next = Map<String, String>.from(_names);
-    if (trimmed.isEmpty || trimmed == location.city) {
-      next.remove(location.id);
-    } else {
-      next[location.id] = trimmed;
-    }
-    await _write(next);
-  }
-
-  /// Drops the name of a server that is no longer on the device.
-  Future<void> forget(Location location) async {
-    if (!_names.containsKey(location.id)) return;
-    await _write(Map<String, String>.from(_names)..remove(location.id));
-  }
-
-  Future<void> _write(Map<String, String> next) async {
-    _names = next;
-    notifyListeners();
-    final prefs = await _prefs();
-    if (prefs == null) return;
-    if (next.isEmpty) {
-      await prefs.remove(_key);
-    } else {
-      await prefs.setString(_key, jsonEncode(next));
-    }
-  }
-
-  /// Preferences, or null where the platform has no store for them. A name
-  /// the device cannot remember is still the name on screen for this run,
-  /// which is better than a screen that will not open.
-  Future<SharedPreferences?> _prefs() async {
-    try {
-      return await SharedPreferences.getInstance();
-    } on MissingPluginException {
-      return null;
-    } on PlatformException {
-      return null;
-    }
-  }
-
-  /// Test hook: forget everything held in memory so one test's rename is not
-  /// the next test's starting state.
-  @visibleForTesting
-  void resetForTesting() {
-    _names = const {};
-    _loaded = false;
-  }
-}
+/// The provider's own name stays on the profile and is still shown under the
+/// rename field, so renaming never loses it. Managed (hideip.net) servers are
+/// named by the fleet and carry no name of the user's own, so they read the
+/// parsed one like everything else.
+String serverLabel(Location l) => l.label;
 
 /// Where a subscription refresh stands right now.
 enum RefreshState { idle, busy, done, error }
 
-/// One entry of the protocol list in Advanced view.
-typedef ProtoChoice = ({String key, String name, String sub});
-
-/// The protocol list, ported from `PROTOCOLS` in
-/// `design/app-1_1_0/core.jsx`. Auto is the recommendation and the default.
-const List<ProtoChoice> kProtoChoices = [
-  (key: 'auto', name: S.tAuto, sub: S.gProtoAutoSub),
-  (key: 'vless', name: S.tVless, sub: S.gProtoVlessSub),
-  (key: 'reality', name: S.gProtoReality, sub: S.gProtoRealitySub),
-  (key: 'vmess', name: S.gProtoVmess, sub: S.gProtoVmessSub),
-  (key: 'trojan', name: S.gProtoTrojan, sub: S.gProtoTrojanSub),
-  (key: 'ss', name: S.gProtoSs, sub: S.gProtoSsSub),
-  (key: 'hy2', name: S.gProtoHy2, sub: S.gProtoHy2Sub),
-];
-
 /// Manage one server: rename it, see where it came from, refresh the
-/// subscription it belongs to, remove it. Advanced view adds the protocol
-/// list and the raw sing-box outbound.
+/// subscription it belongs to, remove it. Advanced view adds the raw sing-box
+/// outbound and the two ways to copy it.
 ///
 /// Managed (hideip.net) servers show the header card only: there is nothing
 /// on them for the user to rename, refresh or remove.
@@ -146,32 +49,24 @@ class DetailScreen extends StatefulWidget {
 }
 
 class _DetailScreenState extends State<DetailScreen> {
-  final ServerNames _names = ServerNames.instance;
-
   bool _testing = false;
   int? _ms;
   RefreshState _refresh = RefreshState.idle;
   int _refreshed = 0;
-  String _proto = 'auto';
 
   @override
   void initState() {
     super.initState();
     final ping = widget.state.pingFor(widget.location.profile);
     if (ping is PingOk) _ms = ping.ms;
-    _names.addListener(_changed);
-    _names.ensureLoaded();
   }
 
-  @override
-  void dispose() {
-    _names.removeListener(_changed);
-    super.dispose();
-  }
-
-  void _changed() {
-    if (mounted) setState(() {});
-  }
+  /// This screen was opened with a snapshot of the location. A rename or a
+  /// subscription refresh rewrites the profile behind it, so the current one
+  /// is looked up by id on every build and the snapshot is only the fallback.
+  Location get _loc => widget.state.locations
+      .firstWhere((l) => l.id == widget.location.id,
+          orElse: () => widget.location);
 
   Future<void> _test() async {
     setState(() => _testing = true);
@@ -185,7 +80,17 @@ class _DetailScreenState extends State<DetailScreen> {
     });
   }
 
-  Future<void> _rename(String name) => _names.rename(widget.location, name);
+  /// The list may have been reordered by a refresh since this screen opened,
+  /// so the position is resolved by identity rather than trusted.
+  Future<void> _rename(String name) async {
+    final state = widget.state;
+    final match = state.locations.where((l) => l.id == widget.location.id);
+    final index = match.isEmpty ? widget.location.index : match.first.index;
+    await state.renameServer(
+      index,
+      name.trim() == _loc.city ? null : name,
+    );
+  }
 
   /// Pulls the subscription this server came from. A failure keeps every
   /// server already on the device: nothing is dropped because a provider was
@@ -193,15 +98,12 @@ class _DetailScreenState extends State<DetailScreen> {
   Future<void> _refreshSubscription(String url) async {
     if (_refresh == RefreshState.busy) return;
     setState(() => _refresh = RefreshState.busy);
-    final result = await UserSubscriptionService().fetch(url);
+    final count = await widget.state.refreshSubscription(url);
     if (!mounted) return;
-    if (result == null) {
+    if (count == null) {
       setState(() => _refresh = RefreshState.error);
       return;
     }
-    if (result.info != null) await SubInfoStore.put(url, result.info!);
-    await widget.state.addProfiles(result.profiles);
-    if (!mounted) return;
     // The provider may have retired this exact server. Its manage screen has
     // nothing left to manage, so the list is where the user belongs.
     final gone =
@@ -212,7 +114,7 @@ class _DetailScreenState extends State<DetailScreen> {
     }
     setState(() {
       _refresh = RefreshState.done;
-      _refreshed = result.profiles.length;
+      _refreshed = count;
     });
   }
 
@@ -279,7 +181,6 @@ class _DetailScreenState extends State<DetailScreen> {
       removedIndex: index,
     );
     await state.remove(index);
-    await _names.forget(widget.location);
     // The server that was selected is gone; Auto is the honest answer, not
     // whichever server happens to sit first in the list now.
     if (toAuto) await state.selectLocation(null);
@@ -289,10 +190,10 @@ class _DetailScreenState extends State<DetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final loc = widget.location;
+    final loc = _loc;
     final advanced = widget.state.prefs.advanced;
     final managed = loc.premium;
-    final name = managed ? loc.city : _names.nameFor(loc);
+    final name = serverLabel(loc);
     final subUrl = loc.profile.subUrl;
     const encoder = JsonEncoder.withIndent('  ');
 
@@ -326,18 +227,6 @@ class _DetailScreenState extends State<DetailScreen> {
                       subUrl == null ? null : () => _refreshSubscription(subUrl),
                 ),
               if (advanced) ...[
-                const HipSectionLabel(S.gProtocol),
-                HipListGroup(children: [
-                  for (final p in kProtoChoices)
-                    HipListRow(
-                      leading: _RadioDot(on: _proto == p.key),
-                      title: p.name,
-                      titleBadge:
-                          p.key == 'auto' ? HipBadge.ok(S.gRecommended) : null,
-                      subtitle: p.sub,
-                      onTap: () => setState(() => _proto = p.key),
-                    ),
-                ]),
                 const HipSectionLabel(S.gRawConfig),
                 Container(
                   width: double.infinity,
@@ -613,27 +502,6 @@ class _HeaderCard extends StatelessWidget {
           ),
         ),
       ]),
-    );
-  }
-}
-
-/// The radio in front of a protocol choice (app.css `.seg-check`).
-class _RadioDot extends StatelessWidget {
-  final bool on;
-  const _RadioDot({required this.on});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 22,
-      height: 22,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: on ? Hip.blue : null,
-        border: Border.all(color: on ? Hip.blue : Hip.line, width: 1.8),
-      ),
-      child:
-          on ? const Icon(Icons.check, size: 13, color: Colors.white) : null,
     );
   }
 }

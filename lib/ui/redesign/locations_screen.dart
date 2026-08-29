@@ -53,8 +53,6 @@ class LocationsScreen extends StatefulWidget {
 }
 
 class _LocationsScreenState extends State<LocationsScreen> {
-  final ServerNames _names = ServerNames.instance;
-
   bool _allLocked = false;
   bool _winnerDismissed = false;
 
@@ -63,18 +61,6 @@ class _LocationsScreenState extends State<LocationsScreen> {
     super.initState();
     final ctx = widget.nav.ctx();
     if (ctx is LocationsCtx) _allLocked = ctx.allLocked;
-    _names.addListener(_changed);
-    _names.ensureLoaded();
-  }
-
-  @override
-  void dispose() {
-    _names.removeListener(_changed);
-    super.dispose();
-  }
-
-  void _changed() {
-    if (mounted) setState(() {});
   }
 
   void _showAll() {
@@ -172,12 +158,12 @@ class _LocationsScreenState extends State<LocationsScreen> {
       selectedId: state.prefs.autoSelect || selected.isEmpty
           ? null
           : selected.first.id,
-      autoCity: fastest?.city,
+      autoCity: fastest == null ? null : serverLabel(fastest),
       autoMs: fastest == null ? null : _ping(fastest),
       autoManaged: fastest?.premium ?? false,
       pingOf: _ping,
       levelOf: (l) => state.levelFor(l.profile),
-      nameOf: (l) => l.premium ? l.city : _names.nameFor(l),
+      nameOf: serverLabel,
       subInfoOf: state.subInfoFor,
       onBack: () => nav.go(HipScreen.home),
       onSelect: _select,

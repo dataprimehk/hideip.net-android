@@ -5,10 +5,9 @@ import 'hip.dart';
 /// The one modal surface in the app: an explanation that needs a decision.
 ///
 /// Ported from app.css `.sheet` (radius 24 on the top corners, 22px side
-/// padding, a grabber, at most two solid actions plus one quiet row). It is
-/// the public version of the shell that the linked-devices screens grew
-/// privately; those keep their own copy until the integration pass folds them
-/// onto this one.
+/// padding, a grabber, at most two solid actions plus one quiet row). Every
+/// sheet in the app is this one, including the linked-device sheets, which
+/// pass their own body in as a single child.
 ///
 /// On iOS the contract asks for the system look (detent, grabber, dimming).
 /// `showModalBottomSheet` with `useSafeArea` plus this grabber is as close as

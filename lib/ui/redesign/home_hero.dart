@@ -14,6 +14,7 @@ import '../../vpn_controller.dart';
 import '../strings.dart';
 import 'ascii/hero_ascii.dart';
 import 'ascii/hero_glow.dart';
+import 'detail_screen.dart' show serverLabel;
 import 'hip.dart';
 import 'hip_sheet.dart';
 import 'home_banners.dart';
@@ -135,8 +136,11 @@ class _HomeHeroScreenState extends State<HomeHeroScreen>
     if (state.needsVpnPrimer) {
       final go =
           await showHipSheet<bool>(context, children: const [VpnPrimerSheet()]);
-      if (go != true) return; // "Not now" costs nothing.
+      // The explanation is offered once per install, whatever the answer was.
+      // "Not now" retires it too, so the next Connect goes straight to the
+      // system dialog rather than reading the same page again.
       await state.markVpnPrimerSeen();
+      if (go != true) return;
     }
     await state.connect();
   }
@@ -807,7 +811,7 @@ class _HomeList extends StatelessWidget {
     final chosen = !auto && active?.id == l.id;
     return HipListRow(
       leading: HipFlag(cc: l.cc),
-      title: l.city,
+      title: serverLabel(l),
       titleBadge: l.premium && state.mix == Mix.mixed
           ? HipBadge.blue('hideip.net')
           : (l.provider != null ? HipBadge.blue(l.provider!) : null),
@@ -865,7 +869,9 @@ class _HomeList extends StatelessWidget {
     final q = query?.toLowerCase();
     if (q != null) {
       bool matches(Location l) =>
-          '${l.city} ${l.country} ${l.cc}'.toLowerCase().contains(q);
+          '${serverLabel(l)} ${l.city} ${l.country} ${l.cc}'
+              .toLowerCase()
+              .contains(q);
       final hits = [...open.where(matches), ...locked.where(matches)];
       final allLocked = hits.isNotEmpty && hits.every((l) => l.locked);
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -901,19 +907,22 @@ class _HomeList extends StatelessWidget {
         return ma.compareTo(mb);
       });
     final fastest = sorted.first;
-    // The chosen server leads the list, even when it is not among the
-    // fastest; the rest keep the speed order. Without a chosen server the
-    // section is simply the fastest ones.
-    final chosen = auto ? null : active;
+    // Recently used servers lead the list, newest first; the fastest fill the
+    // rest of the five. A remembered id whose server is gone is skipped, so a
+    // removed import cannot leave a hole in the list.
+    final byId = {for (final l in open) l.id: l};
+    final recent = <Location>[
+      for (final id in state.prefs.recents) ?byId[id],
+    ].take(4).toList();
     final rows = <Location>[
-      ?chosen,
-      ...sorted.where((l) => l.id != chosen?.id),
+      ...recent,
+      ...sorted.where((l) => recent.every((r) => r.id != l.id)),
     ].take(5).toList();
 
     final fastestMs = _ms(fastest);
     final autoSub = fastestMs == null
         ? S.autoSubUnknown
-        : S.autoSub(fastest.city, fastestMs,
+        : S.autoSub(serverLabel(fastest), fastestMs,
             managed: state.mix == Mix.mixed && fastest.premium);
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -947,7 +956,7 @@ class _HomeList extends StatelessWidget {
         ),
       ]),
       const SizedBox(height: 16),
-      HipSectionLabel(chosen == null ? S.homeFastest : S.homeRecentFastest),
+      HipSectionLabel(recent.isEmpty ? S.homeFastest : S.homeRecentFastest),
       HipListGroup(children: [
         for (final l in rows) _openRow(l, auto: auto, active: active),
         // Exactly one locked row, in the same list: the comparison is the

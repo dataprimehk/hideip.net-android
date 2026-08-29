@@ -61,15 +61,16 @@ class LockedRow extends StatelessWidget {
       leading: HipFlag(cc: location.cc),
       title: location.city,
       titleBadge: location.won
-          ? HipBadge(S.badgeVoted,
-              bg: Hip.blueSoft, fg: Hip.blueDeep, icon: Icons.emoji_events_outlined)
+          ? HipBadge.won(S.badgeVoted, icon: Icons.emoji_events_outlined)
           : null,
       subtitle: subtitle,
       subtitleMono: advanced,
       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
         HipBars(level: level),
         const SizedBox(width: 12),
-        Icon(Icons.lock_outline, size: 17, color: Hip.muted2),
+        // app.css `.lockic.sm`: the padlock is the deep blue, not a muted
+        // gray. It marks what a plan opens, so it wears the brand colour.
+        Icon(Icons.lock_outline, size: 17, color: Hip.blueDeep),
       ]),
       onTap: onTap == null ? null : () => onTap!(from, location.id),
     );

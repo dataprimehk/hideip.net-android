@@ -37,6 +37,46 @@ Widget _grayTile(IconData icon) => Container(
 
 Widget _chevron() => Icon(Icons.chevron_right, size: 17, color: Hip.muted2);
 
+/// A list-row subtitle where every fragment in [mono] is set in the mono
+/// face and the sentence around it stays in the body face.
+///
+/// The billing lines are framed by `S` and filled in by the store, so the
+/// two are put back together at render time instead of being concatenated
+/// into a constant: a translation can move the date to the front of the line
+/// and it still comes out mono. A fragment that is not in [line] is skipped,
+/// which is what a reordered translation does to one that no longer fits.
+InlineSpan monoWithin(String line, List<String> mono) {
+  final words = Hip.sans(400, Hip.bodySize, color: Hip.muted);
+  final numbers = Hip.mono(600, 12.5, color: Hip.muted);
+  final pending = [
+    for (final m in mono)
+      if (m.isNotEmpty) m,
+  ];
+  final spans = <InlineSpan>[];
+  var rest = line;
+  while (pending.isNotEmpty) {
+    var at = -1;
+    var pick = -1;
+    for (var i = 0; i < pending.length; i++) {
+      final found = rest.indexOf(pending[i]);
+      if (found < 0) continue;
+      if (at < 0 || found < at) {
+        at = found;
+        pick = i;
+      }
+    }
+    if (pick < 0) break;
+    final fragment = pending.removeAt(pick);
+    if (at > 0) {
+      spans.add(TextSpan(text: rest.substring(0, at), style: words));
+    }
+    spans.add(TextSpan(text: fragment, style: numbers));
+    rest = rest.substring(at + fragment.length);
+  }
+  if (rest.isNotEmpty) spans.add(TextSpan(text: rest, style: words));
+  return TextSpan(children: spans);
+}
+
 /// Three-way palette switch: Light, Dark, or whatever the system says.
 ///
 /// A two-state switch cannot express the default, and the default is what
@@ -315,13 +355,16 @@ class _SettingsScreenState extends State<SettingsScreen>
     if (mounted) setState(() => _perm = perm);
   }
 
-  String _premiumSubtitle(Premium p) => switch (p.status) {
-        PremiumStatus.trial =>
-          S.setPremiumTrial(formatPremiumDate(p.renews!)),
-        PremiumStatus.active => S.setPremiumActive(
-            PlanInfo.of(p.plan!).name, formatPremiumDate(p.renews!)),
-        PremiumStatus.expired => S.setPremiumEnded,
-        PremiumStatus.none => S.setPremiumNone,
+  InlineSpan _premiumSubtitle(Premium p) => switch (p.status) {
+        PremiumStatus.trial => monoWithin(
+            S.setPremiumTrial(formatPremiumDate(p.renews!)),
+            [formatPremiumDate(p.renews!)]),
+        PremiumStatus.active => monoWithin(
+            S.setPremiumActive(
+                PlanInfo.of(p.plan!).name, formatPremiumDate(p.renews!)),
+            [formatPremiumDate(p.renews!)]),
+        PremiumStatus.expired => monoWithin(S.setPremiumEnded, const []),
+        PremiumStatus.none => monoWithin(S.setPremiumNone, const []),
       };
 
   /// The subscription already covers five devices. An explanation with an
@@ -393,7 +436,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                     title: S.tPremium,
                     titleBadge:
                         premium.isOn ? HipBadge.ok(S.setPremiumOn) : null,
-                    subtitle: _premiumSubtitle(premium),
+                    subtitleSpan: _premiumSubtitle(premium),
                     trailing: _chevron(),
                     onTap: () => nav.go(HipScreen.premium),
                   ),
@@ -489,7 +532,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                   HipListRow(
                     title: S.setRouting,
                     subtitle: S.setRoutingSub(
-                        prefs.autoSelect ? S.tAuto : active.city,
+                        prefs.autoSelect ? S.tAuto : active.label,
                         active.protoLabel),
                     trailing: _chevron(),
                     onTap: () => nav.openDetail(active),

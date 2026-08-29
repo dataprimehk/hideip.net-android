@@ -60,6 +60,14 @@ ImportPayload? classifyImportPayload(String raw) {
     return const ImportPayload(ImportPayloadKind.subscriptionBlob);
   }
 
+  // A sing-box config saved minified is one line and carries no scheme, so
+  // neither rule above catches it. Opened through the file picker it is the
+  // same body a provider would send, and the subscription parser already
+  // reads an `outbounds` array; without this branch it is refused outright.
+  if (text.startsWith('{') && text.contains('"outbounds"')) {
+    return const ImportPayload(ImportPayloadKind.subscriptionBlob);
+  }
+
   final match = _schemeRe.firstMatch(text);
   if (match != null) {
     final scheme = match.group(1)!.toLowerCase();

@@ -39,6 +39,12 @@ class ProxyProfile {
   /// its servers doesn't silently strand the user on dead nodes.
   final String? subUrl;
 
+  /// The name the user gave this server, which wins over [name] everywhere a
+  /// server is listed. Null means they never renamed it. The provider's own
+  /// name is kept either way, so a rename never loses where the server came
+  /// from and can always be undone.
+  final String? customName;
+
   const ProxyProfile({
     required this.name,
     required this.protocol,
@@ -50,9 +56,19 @@ class ProxyProfile {
     this.cc,
     this.premium = false,
     this.subUrl,
+    this.customName,
   });
 
-  ProxyProfile copyWith({String? cc, bool? premium, String? subUrl}) =>
+  /// Sentinel for [copyWith]: tells "leave it alone" apart from "set it to
+  /// null", which a plain optional argument cannot express.
+  static const _keep = Object();
+
+  ProxyProfile copyWith({
+    String? cc,
+    bool? premium,
+    String? subUrl,
+    Object? customName = _keep,
+  }) =>
       ProxyProfile(
         name: name,
         protocol: protocol,
@@ -64,6 +80,9 @@ class ProxyProfile {
         cc: cc ?? this.cc,
         premium: premium ?? this.premium,
         subUrl: subUrl ?? this.subUrl,
+        customName: identical(customName, _keep)
+            ? this.customName
+            : customName as String?,
       );
 
   /// A copy of [outbound] with the given [tag] injected.

@@ -61,6 +61,7 @@ class ProfileStore {
         if (p.cc != null) 'cc': p.cc,
         if (p.premium) 'premium': true,
         if (p.subUrl != null) 'subUrl': p.subUrl,
+        if (p.customName != null) 'customName': p.customName,
       };
 
   static ProxyProfile _fromMap(Map<String, dynamic> m) => ProxyProfile(
@@ -80,5 +81,6 @@ class ProfileStore {
         premium: m['premium'] == true ||
             (m['name'] as String? ?? '').startsWith('hideip.net '),
         subUrl: m['subUrl'] as String?,
+        customName: m['customName'] as String?,
       );
 }

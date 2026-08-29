@@ -10,6 +10,7 @@ import '../../core/sensitive_clipboard.dart';
 import '../../state/app_state.dart';
 import '../qr_scan_screen.dart';
 import 'hip.dart';
+import 'hip_sheet.dart';
 import 'shell.dart';
 
 /// Settings → Linked devices: what else is using this subscription, and the
@@ -266,12 +267,16 @@ class _DeviceRow extends StatelessWidget {
           ]),
         ),
         const SizedBox(width: 12),
-        GestureDetector(
-          onTap: onRevoke,
-          behavior: HitTestBehavior.opaque,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-            child: Icon(Icons.link_off, size: 18, color: Hip.muted2),
+        Semantics(
+          button: true,
+          child: GestureDetector(
+            onTap: onRevoke,
+            behavior: HitTestBehavior.opaque,
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Icon(Icons.link_off, size: 18, color: Hip.muted2),
+            ),
           ),
         ),
       ]),
@@ -332,13 +337,9 @@ Future<bool?> showLinkApprovalSheet(
   required AppState state,
   required DeepLinkPairing pairing,
 }) {
-  return showModalBottomSheet<bool>(
-    context: context,
-    backgroundColor: Colors.transparent,
-    isScrollControlled: true,
-    isDismissible: true,
-    builder: (_) => _LinkApprovalSheet(state: state, pairing: pairing),
-  );
+  return showHipSheet<bool>(context, children: [
+    _LinkApprovalSheet(state: state, pairing: pairing),
+  ]);
 }
 
 class _LinkApprovalSheet extends StatefulWidget {
@@ -398,7 +399,9 @@ class _LinkApprovalSheetState extends State<_LinkApprovalSheet> {
   Widget build(BuildContext context) {
     final done = _phase == _ApprovePhase.done;
     final working = _phase == _ApprovePhase.working;
-    return _SheetShell(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Center(
           child: Container(
@@ -463,12 +466,9 @@ Future<void> showLinkCodeSheet(
   required AppState state,
   required String subToken,
 }) {
-  return showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: Colors.transparent,
-    isScrollControlled: true,
-    builder: (_) => _LinkCodeSheet(state: state, subToken: subToken),
-  );
+  return showHipSheet<void>(context, children: [
+    _LinkCodeSheet(state: state, subToken: subToken),
+  ]);
 }
 
 class _LinkCodeSheet extends StatefulWidget {
@@ -534,7 +534,9 @@ class _LinkCodeSheetState extends State<_LinkCodeSheet> {
   Widget build(BuildContext context) {
     final code = _code;
     final expired = code != null && _left == Duration.zero;
-    return _SheetShell(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text('Enter this code',
             textAlign: TextAlign.center,
@@ -598,44 +600,6 @@ class _LinkCodeSheetState extends State<_LinkCodeSheet> {
         else
           HipCta('Done', onTap: () => Navigator.of(context).pop()),
       ],
-    );
-  }
-}
-
-/// Shared sheet chrome: rounded card, grab handle, centered column.
-class _SheetShell extends StatelessWidget {
-  final List<Widget> children;
-  const _SheetShell({required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Hip.card,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border.all(color: Hip.line, width: 1.5),
-      ),
-      padding: EdgeInsets.fromLTRB(
-          22, 10, 22, MediaQuery.paddingOf(context).bottom + 22),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Center(
-            child: Container(
-              width: 38,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 18),
-              decoration: BoxDecoration(
-                color: Hip.line,
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-          ),
-          ...children,
-        ],
-      ),
     );
   }
 }

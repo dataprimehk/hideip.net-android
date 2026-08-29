@@ -220,6 +220,34 @@ void main() {
       );
     });
 
+    test('once per install, not once per launch', () async {
+      final first = VotePrimerGate();
+      await first.load();
+      expect(first.due(firstOfCycle: true, perm: NotifPerm.ask), isTrue);
+      // The record is written in the background; let it land.
+      await pumpEventQueue();
+
+      final next = VotePrimerGate();
+      await next.load();
+      expect(
+        next.due(firstOfCycle: true, perm: NotifPerm.ask),
+        isFalse,
+        reason: 'a restart is not a second chance to explain',
+      );
+    });
+
+    test('a gate with its own hooks answers to them alone', () async {
+      var seen = false;
+      final gate = VotePrimerGate(
+        readSeen: () async => seen,
+        writeSeen: () async => seen = true,
+      );
+      await gate.load();
+      expect(gate.due(firstOfCycle: true, perm: NotifPerm.ask), isTrue);
+      await pumpEventQueue();
+      expect(seen, isTrue);
+    });
+
     test('an answered permission is not asked again', () {
       expect(
         VotePrimerGate().due(firstOfCycle: true, perm: NotifPerm.granted),

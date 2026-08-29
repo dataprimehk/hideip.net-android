@@ -1,10 +1,15 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hideip_vpn/core/deep_link.dart';
 import 'package:hideip_vpn/core/device_link.dart';
+import 'package:hideip_vpn/state/app_state.dart';
+import 'package:hideip_vpn/ui/redesign/hip_sheet.dart';
+import 'package:hideip_vpn/ui/redesign/linked_devices_screen.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// A client that answers every request with [status]/[body] and records the
 /// last request so the test can assert on the wire shape.
@@ -286,6 +291,51 @@ void main() {
       final broken = DeviceLinkService(
           client: MockClient((_) async => throw const SocketFailure()));
       expect(await broken.revoke(subToken: 't', deviceId: 'd'), isFalse);
+    });
+  });
+
+  group('the approval sheet rides the shared sheet', () {
+    Widget host(void Function(bool?) onClosed) => MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Center(
+                child: TextButton(
+                  onPressed: () async => onClosed(await showLinkApprovalSheet(
+                    context,
+                    state: AppState(),
+                    pairing: const DeepLinkPairing('abc'),
+                  )),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+    testWidgets('it is a HipSheet, not a private copy of one', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await tester.pumpWidget(host((_) {}));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(HipSheet), findsOneWidget);
+      expect(find.text('Link this device?'), findsOneWidget);
+      expect(find.text('Approve'), findsOneWidget);
+    });
+
+    testWidgets('cancelling answers no', (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final answers = <bool?>[];
+      await tester.pumpWidget(host(answers.add));
+
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(answers, [false]);
+      expect(find.byType(HipSheet), findsNothing);
     });
   });
 }

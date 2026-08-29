@@ -691,7 +691,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
                         color: Colors.white.withValues(alpha: .58),
                         height: 1.5)),
                 const SizedBox(height: 18),
-                for (final l in locations) _unlockRow(l),
+                for (var i = 0; i < locations.length; i++)
+                  UnlockIn(index: i, child: _unlockRow(locations[i])),
                 const Spacer(),
                 _legal(trial
                     ? S.pwDoneLegalTrial(renewsDate)
@@ -741,6 +742,74 @@ class _PaywallScreenState extends State<PaywallScreen> {
             style:
                 Hip.mono(600, 11, color: Colors.white.withValues(alpha: .5))),
       ]),
+    );
+  }
+}
+
+/// Deals one unlocked location in, a beat after the one above it.
+///
+/// app.css `.unlock`: a 450 ms rise from 10px down, the first row starting at
+/// 250 ms and every next one 160 ms later. The stagger is what makes the list
+/// read as things gained one by one instead of a block that appears. The
+/// timing goes through [Hip.dur], so "reduce motion" draws every row in place
+/// at once.
+class UnlockIn extends StatefulWidget {
+  final int index;
+  final Widget child;
+  const UnlockIn({super.key, required this.index, required this.child});
+
+  static const first = Duration(milliseconds: 250);
+  static const step = Duration(milliseconds: 160);
+  static const run = Duration(milliseconds: 450);
+
+  @override
+  State<UnlockIn> createState() => _UnlockInState();
+}
+
+class _UnlockInState extends State<UnlockIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  late final CurvedAnimation _rise;
+
+  @override
+  void initState() {
+    super.initState();
+    final delay = UnlockIn.first + UnlockIn.step * widget.index;
+    final total = delay + UnlockIn.run;
+    _c = AnimationController(vsync: this, duration: Hip.dur(total));
+    // One controller per row rather than a shared clock: the delay is the
+    // dead part of its own curve, which keeps a row that is added later
+    // (the catalog answering after the purchase) on the same rhythm.
+    _rise = CurvedAnimation(
+      parent: _c,
+      curve: Interval(
+        delay.inMilliseconds / total.inMilliseconds,
+        1,
+        curve: const Cubic(.22, .61, .36, 1),
+      ),
+    );
+    _c.forward();
+  }
+
+  @override
+  void dispose() {
+    _rise.dispose();
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _rise,
+      child: widget.child,
+      builder: (_, child) => Opacity(
+        opacity: _rise.value,
+        child: Transform.translate(
+          offset: Offset(0, 10 * (1 - _rise.value)),
+          child: child,
+        ),
+      ),
     );
   }
 }

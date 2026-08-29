@@ -296,6 +296,14 @@ class HipBadge extends StatelessWidget {
   factory HipBadge.blue(String text) =>
       HipBadge(text, bg: Hip.blueSoft, fg: Hip.blueDeep);
 
+  /// A location the votes brought in (app.css `.badge.won`). Amber, not
+  /// blue: it marks something the people who voted earned, so it reads apart
+  /// from the blue the rest of the app spends on Premium.
+  factory HipBadge.won(String text, {IconData? icon}) => HipBadge(text,
+      bg: Brand.hsl(42, 92, 52, .16),
+      fg: Hip.dm ? Brand.hsl(42, 92, 66) : Brand.hsl(38, 85, 38),
+      icon: icon);
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -363,6 +371,12 @@ class HipCta extends StatelessWidget {
   final bool quiet;
   final bool darkGhost; // ghost on a dark (onboarding) surface
   final bool danger; // red-tinted ghost, for disconnect-style actions
+
+  /// The onboarding ghost (ob3.css `.ob3-root .cta.ghost`): a fainter fill
+  /// than [darkGhost], a hairline rim around it, and a label held just under
+  /// full white so the secondary way out sits behind the primary action on
+  /// the same dark panel. Implies [ghost] on a dark surface.
+  final bool obGhost;
   final Widget? leading;
   const HipCta(this.label,
       {super.key,
@@ -372,24 +386,29 @@ class HipCta extends StatelessWidget {
       this.quiet = false,
       this.darkGhost = false,
       this.danger = false,
+      this.obGhost = false,
       this.leading});
 
   @override
   Widget build(BuildContext context) {
     final disabled = onTap == null;
     final height = quiet ? 44.0 : 54.0;
+    final isGhost = ghost || obGhost;
+    final onDark = darkGhost || obGhost;
 
     Color fg;
     if (connect) {
       fg = Colors.white;
-    } else if (ghost) {
+    } else if (isGhost) {
       // The danger tint reads on light and dark surfaces alike; the same red
       // the IP pill uses for EXPOSED, so "stop protecting" wears its color.
       fg = danger
-          ? (darkGhost ? Brand.hsl(4, 85, 70) : Brand.hsl(4, 68, 50))
-          : (darkGhost ? Colors.white : Hip.ink);
+          ? (onDark ? Brand.hsl(4, 85, 70) : Brand.hsl(4, 68, 50))
+          : obGhost
+              ? Colors.white.withValues(alpha: .88)
+              : (onDark ? Colors.white : Hip.ink);
     } else if (quiet) {
-      fg = darkGhost ? Colors.white.withValues(alpha: .55) : Hip.muted;
+      fg = onDark ? Colors.white.withValues(alpha: .55) : Hip.muted;
     } else {
       fg = Colors.white;
     }
@@ -423,12 +442,16 @@ class HipCta extends StatelessWidget {
           spreadRadius: -12,
         ),
       ];
-    } else if (ghost) {
+    } else if (isGhost) {
       if (danger) {
-        bg = Brand.hsl(4, 80, 60, darkGhost ? .14 : .08);
+        bg = Brand.hsl(4, 80, 60, onDark ? .14 : .08);
         border = Border.all(color: Brand.hsl(4, 80, 60, .35), width: 1.5);
+      } else if (obGhost) {
+        bg = Colors.white.withValues(alpha: .07);
+        border =
+            Border.all(color: Colors.white.withValues(alpha: .17), width: 1.5);
       } else {
-        bg = darkGhost
+        bg = onDark
             ? Colors.white.withValues(alpha: .09)
             : (Hip.dm ? Brand.hsl(222, 14, 16) : Hip.line2);
       }
@@ -610,6 +633,12 @@ class HipListRow extends StatelessWidget {
   final Widget? titleBadge;
   final String? subtitle;
   final bool subtitleMono;
+
+  /// A subtitle built from spans, for the lines that mix the body face with
+  /// mono runs (a date, a price). It wins over [subtitle] when both are
+  /// given; the span carries its own styles, so [subtitleMono] does not
+  /// apply to it.
+  final InlineSpan? subtitleSpan;
   final Widget? trailing;
   final VoidCallback? onTap;
   final bool selected; // the currently chosen server: soft blue field
@@ -621,6 +650,7 @@ class HipListRow extends StatelessWidget {
     this.titleBadge,
     this.subtitle,
     this.subtitleMono = false,
+    this.subtitleSpan,
     this.trailing,
     this.onTap,
     this.selected = false,
@@ -672,7 +702,14 @@ class HipListRow extends StatelessWidget {
                 titleBadge!,
               ],
             ]),
-            if (subtitle != null)
+            if (subtitleSpan != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: Text.rich(subtitleSpan!,
+                    overflow: TextOverflow.ellipsis,
+                    style: Hip.sans(400, Hip.bodySize, color: Hip.muted)),
+              )
+            else if (subtitle != null)
               Padding(
                 padding: const EdgeInsets.only(top: 1),
                 child: Text(subtitle!,

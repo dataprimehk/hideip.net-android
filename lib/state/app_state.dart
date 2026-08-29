@@ -5,6 +5,7 @@ import 'package:flutter/services.dart' show MissingPluginException;
 
 import '../core/app_telemetry.dart';
 import '../core/async_gate.dart';
+import '../core/cc_iso.dart';
 import '../core/connectivity.dart';
 import '../core/device_link.dart';
 import '../core/haptics.dart';
@@ -24,6 +25,7 @@ import '../core/sub_info.dart';
 import '../core/subscription.dart';
 import '../core/ui_prefs.dart';
 import '../core/user_subscription.dart';
+import '../core/votes.dart';
 import '../core/wg_keys.dart';
 import '../core/wg_profile.dart';
 import '../core/wg_register.dart';
@@ -223,7 +225,8 @@ class AppState extends ChangeNotifier {
   /// hideip.net locations the user cannot use yet, cheapest latency first.
   /// Empty while a subscription is live: they are then real servers in
   /// [profiles] instead.
-  List<Location> get lockedLocations => List.unmodifiable(_lockedLocations);
+  List<Location> get lockedLocations =>
+      List.unmodifiable([for (final l in _lockedLocations) _stampWon(l)]);
 
   /// What the OS says about the VPN configuration.
   VpnPerm get vpnPerm => _vpnPerm;
@@ -249,7 +252,21 @@ class AppState extends ChangeNotifier {
   bool get speedDeviceLimit => _wgDeviceLimit;
 
   /// Display-friendly view over [profiles], in the same order.
-  List<Location> get locations => Location.deriveAll(_profiles);
+  List<Location> get locations =>
+      [for (final l in Location.deriveAll(_profiles)) _stampWon(l)];
+
+  /// Marks a location whose country won a voting round and went live.
+  ///
+  /// The vote service answers in ISO 3166 numeric codes while a location
+  /// carries the alpha-2 one, so the two are matched through [ccNumeric]. The
+  /// trophy is a one-off reward: once the user has connected there its id is
+  /// in [UiPrefs.wonClaimed] and the location goes back to being an ordinary
+  /// server, on every screen at once.
+  Location _stampWon(Location l) {
+    final won = !_prefs.wonClaimed.contains(l.id) &&
+        VoteService.instance.won.contains(ccNumeric(l.cc) ?? '');
+    return won == l.won ? l : l.copyWith(won: won);
+  }
 
   /// The location the tunnel would use right now. In auto mode this is the
   /// lowest-latency probed server (falling back to the persisted selection).
@@ -533,9 +550,13 @@ class AppState extends ChangeNotifier {
     if (on) {
       _wgDeviceLimit = false;
       await _refreshWireGuard(null);
-      // The device limit is reported by the Settings sheet (F5), not by a
-      // toast: it is an explanation with an action, not a notice in passing.
-      // [speedDeviceLimit] is what the screen reads.
+      if (_wgDeviceLimit) {
+        // The subscription has no slot left, so Speed mode is not running and
+        // the stored preference must not claim otherwise: an app restart
+        // would otherwise come up believing it is on. The flag stays, because
+        // Settings reads it to raise the explanation with its action.
+        await updatePrefs(_prefs.copyWith(speedMode: false));
+      }
     } else {
       // Best effort: a failed revoke only costs a slot until the
       // subscription lapses, and must not block the toggle.
@@ -799,9 +820,10 @@ class AppState extends ChangeNotifier {
   Future<void> addProfiles(
     List<ProxyProfile> newProfiles, {
     bool select = false,
+    bool countFirstProfile = true,
   }) async {
     if (newProfiles.isEmpty) return;
-    _count(AppEvent.firstProfile);
+    if (countFirstProfile) _count(AppEvent.firstProfile);
     final sel = selected;
     // Re-importing a subscription the list already holds must replace its
     // group, not stack a second copy of every server next to the first.
@@ -832,6 +854,21 @@ class AppState extends ChangeNotifier {
     _backfillGeo();
   }
 
+  /// Re-reads one subscription URL and replaces the servers that came from
+  /// it. Returns how many the provider sent back, or null when it could not
+  /// be reached: a failure keeps every server already on the device, because
+  /// nothing should be dropped over a provider being briefly unreachable.
+  Future<int?> refreshSubscription(String subUrl) async {
+    final result = await _userSubs.fetch(subUrl);
+    if (result == null) return null;
+    final info = result.info;
+    if (info != null) await SubInfoStore.put(subUrl, info);
+    // A manual refresh is not a first import, so the one-shot counter that
+    // marks "this install has servers now" stays where it is.
+    await addProfiles(result.profiles, countFirstProfile: false);
+    return result.profiles.length;
+  }
+
   /// Fill in country codes for profiles whose name reveals no location by
   /// geolocating the server address. Fire-and-forget: rows silently gain
   /// their flag (and map pin) when an answer arrives, and profiles that
@@ -860,7 +897,10 @@ class AppState extends ChangeNotifier {
       Haptics.selection();
       return;
     }
-    await updatePrefs(_prefs.copyWith(autoSelect: false));
+    await updatePrefs(_prefs.copyWith(
+      autoSelect: false,
+      recents: UiPrefs.pushRecent(_prefs.recents, loc.id),
+    ));
     await select(loc.index);
   }
 
@@ -874,6 +914,19 @@ class AppState extends ChangeNotifier {
       if (_conn == ConnState.error) _conn = ConnState.disconnected;
     }
     await ProfileStore.saveSelectedIndex(_selected);
+    notifyListeners();
+  }
+
+  /// Give the server at [index] a name of the user's own. An empty name (or
+  /// null) drops back to the one the provider sent, which stays on the
+  /// profile throughout, so renaming never loses it.
+  Future<void> renameServer(int index, String? name) async {
+    if (index < 0 || index >= _profiles.length) return;
+    final trimmed = name?.trim();
+    final next = trimmed == null || trimmed.isEmpty ? null : trimmed;
+    if (next == _profiles[index].customName) return;
+    _profiles[index] = _profiles[index].copyWith(customName: next);
+    await _persist();
     notifyListeners();
   }
 
@@ -925,7 +978,8 @@ class AppState extends ChangeNotifier {
     // it does not raise the failure sheet; the reason sits under the button.
     if (_offline) return;
     // Auto mode resolves to the best probed server; otherwise the selection.
-    final profile = activeLocation?.profile ?? selected;
+    final target = activeLocation;
+    final profile = target?.profile ?? selected;
     if (profile == null) {
       _setError(S.errNoServer);
       return;
@@ -993,6 +1047,7 @@ class AppState extends ChangeNotifier {
       _connectedAt ??= DateTime.now();
       Haptics.success();
       notifyListeners();
+      if (target != null) await _claimWin(target);
       _count(AppEvent.firstConnect);
       _refreshIpAfterToggle();
       // With WireGuard up, watch for the handshake actually completing and
@@ -1011,6 +1066,15 @@ class AppState extends ChangeNotifier {
       _showConnectFailed = !_offline;
       notifyListeners();
     }
+  }
+
+  /// Connecting to a location that won a voting round is what collects the
+  /// reward: the trophy comes off it and does not come back.
+  Future<void> _claimWin(Location loc) async {
+    if (!loc.won || _prefs.wonClaimed.contains(loc.id)) return;
+    await updatePrefs(
+      _prefs.copyWith(wonClaimed: {..._prefs.wonClaimed, loc.id}),
+    );
   }
 
   /// Cancel a connect in progress. The CTA stays live while Connecting for

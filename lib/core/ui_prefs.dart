@@ -25,6 +25,14 @@ class UiPrefs {
   static const _kConnAlerts = 'ui_connalerts_v1';
   static const _kVotingNotifs = 'ui_votingnotifs_v1';
   static const _kUpsellSnooze = 'ui_upsellsnooze_v1';
+  static const _kRecents = 'ui_recents_v1';
+  static const _kWonClaimed = 'ui_won_claimed_v1';
+  static const _kVotePrimer = 'ui_vote_primer_v1';
+
+  /// How many recently used locations are remembered. Home shows at most a
+  /// handful of them; the rest is the tail that lets one dropped server fall
+  /// off the list without emptying it.
+  static const maxRecents = 8;
 
   final bool advanced;
   final bool onboarded;
@@ -69,6 +77,20 @@ class UiPrefs {
   /// never been dismissed.
   final int upsellSnoozeUntil;
 
+  /// Locations the user picked, most recent first, capped at [maxRecents].
+  /// Stored as `Location.id` (`host:port`), which survives a subscription
+  /// refresh reordering the list.
+  final List<String> recents;
+
+  /// Locations whose winner trophy has already been collected: the user
+  /// connected there once, which is what turns the reward back into an
+  /// ordinary server. Stored as `Location.id`, same as [recents].
+  final Set<String> wonClaimed;
+
+  /// Whether the notification explanation after the first vote has been
+  /// offered. Once per install, whatever the answer was.
+  final bool votePrimerSeen;
+
   const UiPrefs({
     this.advanced = false,
     this.onboarded = false,
@@ -85,7 +107,17 @@ class UiPrefs {
     this.connAlerts = true,
     this.votingNotifs = false,
     this.upsellSnoozeUntil = 0,
+    this.recents = const [],
+    this.wonClaimed = const {},
+    this.votePrimerSeen = false,
   });
+
+  /// [recents] with [id] moved to the front, deduplicated and capped. The
+  /// same location picked twice is one entry, not two.
+  static List<String> pushRecent(List<String> recents, String id) => [
+        id,
+        ...recents.where((e) => e != id),
+      ].take(maxRecents).toList();
 
   /// Whether the Speed mode upsell may show right now.
   bool upsellAllowed(DateTime now) =>
@@ -107,6 +139,9 @@ class UiPrefs {
     bool? connAlerts,
     bool? votingNotifs,
     int? upsellSnoozeUntil,
+    List<String>? recents,
+    Set<String>? wonClaimed,
+    bool? votePrimerSeen,
   }) =>
       UiPrefs(
         advanced: advanced ?? this.advanced,
@@ -124,6 +159,9 @@ class UiPrefs {
         connAlerts: connAlerts ?? this.connAlerts,
         votingNotifs: votingNotifs ?? this.votingNotifs,
         upsellSnoozeUntil: upsellSnoozeUntil ?? this.upsellSnoozeUntil,
+        recents: recents ?? this.recents,
+        wonClaimed: wonClaimed ?? this.wonClaimed,
+        votePrimerSeen: votePrimerSeen ?? this.votePrimerSeen,
       );
 
   static Future<UiPrefs> load() async {
@@ -144,6 +182,9 @@ class UiPrefs {
       connAlerts: p.getBool(_kConnAlerts) ?? true,
       votingNotifs: p.getBool(_kVotingNotifs) ?? false,
       upsellSnoozeUntil: p.getInt(_kUpsellSnooze) ?? 0,
+      recents: p.getStringList(_kRecents) ?? const [],
+      wonClaimed: (p.getStringList(_kWonClaimed) ?? const []).toSet(),
+      votePrimerSeen: p.getBool(_kVotePrimer) ?? false,
     );
   }
 
@@ -177,5 +218,8 @@ class UiPrefs {
     await p.setBool(_kConnAlerts, connAlerts);
     await p.setBool(_kVotingNotifs, votingNotifs);
     await p.setInt(_kUpsellSnooze, upsellSnoozeUntil);
+    await p.setStringList(_kRecents, recents);
+    await p.setStringList(_kWonClaimed, wonClaimed.toList());
+    await p.setBool(_kVotePrimer, votePrimerSeen);
   }
 }

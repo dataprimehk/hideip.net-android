@@ -22,8 +22,8 @@
 ///    separator in metadata lines.
 ///  * A full stop ends an explanation, never a label, a button or a badge.
 ///
-/// Each group F1 to F7 owns one section below and only ever appends to its
-/// own. Nobody edits another group's constants.
+/// Each screen owns one section below. A new string is appended to the end
+/// of the section it belongs to, so the file never reshuffles under a diff.
 abstract final class S {
   // ---------------------------------------------------------------------
   // Vocabulary (Atlas `vocabulary[]`). The words the whole product agrees on.
@@ -61,7 +61,7 @@ abstract final class S {
   static const badgeVoted = 'Voted';
 
   // ---------------------------------------------------------------------
-  // F0 · foundation. State, connection flow and everything the shell says.
+  // Foundation. State, connection flow and everything the shell says.
   // ---------------------------------------------------------------------
 
   // B0, Connect with no servers yet.
@@ -154,8 +154,7 @@ abstract final class S {
       'When a location you voted for becomes available';
 
   // ---------------------------------------------------------------------
-  // F1 · Home. Statcard, banners, search, session card, empty state.
-  // Owned by the Home group; append only.
+  // Home. Statcard, banners, search, session card, empty state.
   // ---------------------------------------------------------------------
 
   /// The Servers/Map switch on the hero panel.
@@ -222,8 +221,7 @@ abstract final class S {
   static String homeRowSub(String country, int ms) => '$country · $ms ms';
 
   // ---------------------------------------------------------------------
-  // F2 · Locations and Manage server.
-  // Owned by the Locations group; append only.
+  // Locations and Manage server.
   // ---------------------------------------------------------------------
 
   // D1, the locked hideip.net group: what a plan opens, priced under it.
@@ -302,21 +300,7 @@ abstract final class S {
       hours == 1 ? '1 hour ago' : '$hours hours ago';
   static String gAgoDays(int days) => days == 1 ? '1 day ago' : '$days days ago';
 
-  // G4, Advanced only: the protocol list and the raw outbound.
-  static const gProtocol = 'Protocol';
-  static const gRecommended = 'Recommended';
-  static const gProtoAutoSub = 'Recommended: picks the fastest that works';
-  static const gProtoVlessSub = 'Lightweight, XTLS-ready';
-  static const gProtoReality = 'Reality';
-  static const gProtoRealitySub = 'TLS fingerprint camouflage';
-  static const gProtoVmess = 'VMess';
-  static const gProtoVmessSub = 'Classic v2ray transport';
-  static const gProtoTrojan = 'Trojan';
-  static const gProtoTrojanSub = 'Looks like ordinary HTTPS';
-  static const gProtoSs = 'Shadowsocks';
-  static const gProtoSsSub = 'Fast, battle-tested';
-  static const gProtoHy2 = 'Hysteria2';
-  static const gProtoHy2Sub = 'QUIC, great on lossy links';
+  // G4, Advanced only: the raw outbound.
   static const gRawConfig = 'Raw config';
   static const gCopyConfig = 'Copy config';
   static const gCopyFull = 'Copy full config';
@@ -338,8 +322,7 @@ abstract final class S {
   static String gRemoved(String city) => '$city removed';
 
   // ---------------------------------------------------------------------
-  // F3 · Import.
-  // Owned by the Import group; append only.
+  // Import.
   // ---------------------------------------------------------------------
 
   // E1, the empty field and the three actions under it.
@@ -448,8 +431,7 @@ abstract final class S {
       'Paste was not allowed. Long press the field to paste manually.';
 
   // ---------------------------------------------------------------------
-  // F4 · Settings, Paywall, Premium manage, Trial expired.
-  // Owned by the Settings/Premium group; append only.
+  // Settings, Paywall, Premium manage, Trial expired.
   // ---------------------------------------------------------------------
 
   // A `|segment|` inside a legal line renders in mono at full opacity: it is
@@ -634,8 +616,7 @@ abstract final class S {
   static const expCtaImport = 'Use your own connection link';
 
   // ---------------------------------------------------------------------
-  // F5 · Map and voting.
-  // Owned by the Map group; append only.
+  // Map and voting.
   // ---------------------------------------------------------------------
 
   // C1, the map hint. Before the first vote it invites and carries the
@@ -688,8 +669,7 @@ abstract final class S {
       '$lat°$ns $lon°$ew';
 
   // ---------------------------------------------------------------------
-  // F6 · Onboarding v3.
-  // Owned by the Onboarding group; append only.
+  // Onboarding v3.
   // ---------------------------------------------------------------------
 
   /// The three beats. Each headline ships whole and names the one word that
@@ -746,7 +726,7 @@ abstract final class S {
   static const obExplore = 'Explore the app first';
 
   // ---------------------------------------------------------------------
-  // F7 · Home ASCII engine. No strings beyond the address samples, which
+  // Home ASCII engine. No strings beyond the address samples, which
   // live in the engine because they are drawn glyphs, not copy.
   // ---------------------------------------------------------------------
 }

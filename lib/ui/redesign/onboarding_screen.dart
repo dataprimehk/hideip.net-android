@@ -459,7 +459,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       Padding(
         padding: const EdgeInsets.fromLTRB(22, 14, 22, 22),
         child: Column(children: [
-          HipCta(S.obExplore, ghost: true, darkGhost: true, onTap: _finish),
+          HipCta(S.obExplore, obGhost: true, onTap: _finish),
           const SizedBox(height: 30),
         ]),
       ),

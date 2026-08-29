@@ -51,6 +51,10 @@ class Location {
       );
 
   String get rawName => profile.name;
+
+  /// The label to show for this location: the name the user gave the
+  /// server, or the parsed one. The provider's own name stays in [rawName].
+  String get label => profile.customName ?? city;
   String get host => '${profile.server}:${profile.port}';
 
   /// Stable identity for a row across rebuilds, and what the paywall is

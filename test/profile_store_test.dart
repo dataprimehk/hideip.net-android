@@ -30,6 +30,42 @@ void main() {
     expect(loaded.map((p) => p.premium).toList(), [true, false]);
   });
 
+  test('a name the user gave survives a save/load round trip', () async {
+    SharedPreferences.setMockInitialValues({});
+    await ProfileStore.save([
+      const ProxyProfile(
+          name: 'ch-zur-reality-03',
+          protocol: 'vless',
+          server: '1.2.3.4',
+          port: 443,
+          outbound: {'type': 'vless'},
+          customName: 'Home'),
+      const ProxyProfile(
+          name: 'never renamed',
+          protocol: 'vless',
+          server: '5.6.7.8',
+          port: 443,
+          outbound: {'type': 'vless'}),
+    ]);
+    final loaded = await ProfileStore.load();
+    expect(loaded.map((p) => p.customName).toList(), ['Home', null]);
+    // The provider's own name is kept alongside it, so a rename is never a
+    // loss and can always be undone.
+    expect(loaded.first.name, 'ch-zur-reality-03');
+  });
+
+  test('clearing a name is told apart from leaving it alone', () {
+    const p = ProxyProfile(
+        name: 'ch-zur-reality-03',
+        protocol: 'vless',
+        server: '1.2.3.4',
+        port: 443,
+        outbound: {'type': 'vless'},
+        customName: 'Home');
+    expect(p.copyWith(cc: 'CH').customName, 'Home');
+    expect(p.copyWith(customName: null).customName, isNull);
+  });
+
   test('subUrl survives a save/load round trip', () async {
     SharedPreferences.setMockInitialValues({});
     await ProfileStore.save([

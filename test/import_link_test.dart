@@ -125,6 +125,17 @@ void main() {
           const ImportPayload(ImportPayloadKind.subscriptionBlob));
     });
 
+    test('a minified sing-box config is a body, not a stray line', () {
+      // Saved without newlines it has neither a scheme nor a second line, so
+      // every other rule passes it by; the subscription parser reads its
+      // outbounds exactly as it reads a provider's.
+      expect(
+        classifyImportPayload(
+            '{"log":{"level":"warn"},"outbounds":[{"type":"vless"}]}'),
+        const ImportPayload(ImportPayloadKind.subscriptionBlob),
+      );
+    });
+
     test('refuses text that is neither a link nor a body', () {
       for (final text in ['', '   ', 'hello', 'vless:uuid@host', '#comment']) {
         expect(classifyImportPayload(text), isNull, reason: text);
