@@ -10,12 +10,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// is just the country code (see docs/voting-api.md for the full contract).
 ///
 /// Backend contract:
-///   GET  {endpoint}                       -> 200 {"votes": {"RS": 141, ...}}
+///   GET  {endpoint}
+///     -> 200 {"votes": {"RS": 141, ...}, "max": 3, "resets": "2026-09-01",
+///             "won": ["784"]}
 ///   POST {endpoint} {"country":"RS","vote":true}  -> 200 {"country":"RS","votes":142}
 ///
 /// The service is fully usable before the backend exists: a vote lands in
 /// local storage immediately and queues for sync, and vote counts only render
-/// once the server has answered at least once (no invented numbers).
+/// once the server has answered at least once (no invented numbers). The same
+/// rule covers the quota: with no answer yet there is no "N of M left" on
+/// screen, and voting is not blocked by a limit nobody has stated.
 class VoteService extends ChangeNotifier {
   VoteService._();
   static final VoteService instance = VoteService._();
@@ -25,13 +29,25 @@ class VoteService extends ChangeNotifier {
   static const endpoint = 'https://hideip.net/api/votes';
 
   static const _kMine = 'votes_mine_v1';
+  static const _kMineCycles = 'votes_mine_cycles_v1';
   static const _kPending = 'votes_pending_v1';
   static const _kCounts = 'votes_counts_v1';
+  static const _kCycle = 'votes_cycle_v1';
+  static const _kMax = 'votes_max_v1';
 
   SharedPreferences? _prefs;
-  final Set<String> _mine = {};
+
+  /// Every country this install voted for, mapped to the cycle it was cast
+  /// in. The cycle is the reset date the server was announcing at the time.
+  /// A vote from a finished cycle still shows as cast; it just no longer
+  /// spends anything, which is the whole reason the cycle is stored per vote
+  /// rather than as one global counter.
+  final Map<String, String> _mine = {};
   final Map<String, bool> _pending = {};
   Map<String, int>? _counts; // null until the server has ever answered
+  final Set<String> _won = {};
+  String? _cycle; // the current reset date, as the server states it
+  int? _max; // votes per cycle, null until the server has said
   bool _refreshing = false;
 
   /// Test hook: inject an http client; null uses a fresh default client.
@@ -42,7 +58,35 @@ class VoteService extends ChangeNotifier {
   /// cast; retracting every vote brings it back. Derived, not a stored flag,
   /// so it self-corrects across installs and upgrades.
   bool get hintDismissed => _mine.isNotEmpty;
-  bool hasVoted(String cc) => _mine.contains(cc);
+  bool hasVoted(String cc) => _mine.containsKey(cc);
+
+  /// How many votes this cycle allows, or null while the server has not said.
+  int? get votesMax => _max;
+
+  /// When the allowance resets, as the server states it, or null while it has
+  /// not said. Rendered verbatim; the client never formats a date it invented.
+  String? get votesReset => _cycle;
+
+  /// Votes still available this cycle, or null while the quota is unknown.
+  int? get votesLeft {
+    final max = _max;
+    if (max == null) return null;
+    final left = max - _spentThisCycle;
+    return left < 0 ? 0 : left;
+  }
+
+  /// Whether another country may be voted for right now.
+  bool get canVote {
+    final left = votesLeft;
+    return left == null || left > 0;
+  }
+
+  int get _spentThisCycle =>
+      _mine.values.where((cycle) => cycle == (_cycle ?? '')).length;
+
+  /// Countries whose vote already won a round and went live. Used for the
+  /// trophy on the map pin and the winner card in Locations.
+  Set<String> get won => Set.unmodifiable(_won);
 
   /// The count to render for [cc], or null when the server total is unknown
   /// (the UI omits the number rather than inventing one). A queued local vote
@@ -55,8 +99,8 @@ class VoteService extends ChangeNotifier {
     return queued ? base + 1 : (base > 0 ? base - 1 : 0);
   }
 
-  /// The countries this install has voted for.
-  Set<String> get mine => Set.unmodifiable(_mine);
+  /// The countries this install has voted for, in any cycle.
+  Set<String> get mine => Set.unmodifiable(_mine.keys.toSet());
 
   /// Top voted countries as (code, count), highest first. Empty until the
   /// server has answered at least once, for the same reason [displayCount]
@@ -75,15 +119,44 @@ class VoteService extends ChangeNotifier {
     return entries.take(limit).toList();
   }
 
+  /// Test hook: forget everything held in memory so the next [init] reloads
+  /// from a fresh [SharedPreferences] mock. The service is a singleton, so
+  /// without this one test's votes are the next test's starting state.
+  @visibleForTesting
+  void resetForTesting() {
+    _prefs = null;
+    _mine.clear();
+    _pending.clear();
+    _counts = null;
+    _won.clear();
+    _cycle = null;
+    _max = null;
+    _refreshing = false;
+    clientOverride = null;
+  }
+
   Future<void> init() async {
     if (_prefs != null) {
       unawaited(refresh());
       return;
     }
     final p = _prefs = await SharedPreferences.getInstance();
-    _mine
-      ..clear()
-      ..addAll(p.getStringList(_kMine) ?? const []);
+    _cycle = p.getString(_kCycle);
+    _max = p.getInt(_kMax);
+    _mine.clear();
+    final rawCycles = p.getString(_kMineCycles);
+    if (rawCycles != null) {
+      try {
+        (json.decode(rawCycles) as Map<String, dynamic>)
+            .forEach((k, v) => _mine[k] = v as String);
+      } catch (_) {}
+    } else {
+      // Upgrade from the flat list: those votes were cast under whatever
+      // cycle is current, so they spend from it like any other.
+      for (final cc in p.getStringList(_kMine) ?? const <String>[]) {
+        _mine[cc] = _cycle ?? '';
+      }
+    }
     _pending.clear();
     final rawPending = p.getString(_kPending);
     if (rawPending != null) {
@@ -105,10 +178,20 @@ class VoteService extends ChangeNotifier {
 
   /// Casts or retracts the vote for [cc]. Local state flips immediately; the
   /// server sync runs in the background and survives restarts via the queue.
+  /// Retracts the vote for [cc], the separate action the vote panel offers
+  /// once a country is voted for. A no-op when there is no vote to retract.
+  Future<void> unvote(String cc) async {
+    if (!_mine.containsKey(cc)) return;
+    await toggle(cc);
+  }
+
   Future<void> toggle(String cc) async {
-    final voting = !_mine.contains(cc);
+    final voting = !_mine.containsKey(cc);
+    // The quota only stops new votes. Retracting always works, and it is what
+    // gives a vote back: three picks is a budget, not three taps.
+    if (voting && !canVote) return;
     if (voting) {
-      _mine.add(cc);
+      _mine[cc] = _cycle ?? '';
     } else {
       _mine.remove(cc);
     }
@@ -137,6 +220,16 @@ class VoteService extends ChangeNotifier {
           final body = json.decode(res.body) as Map<String, dynamic>;
           _counts = (body['votes'] as Map<String, dynamic>)
               .map((k, v) => MapEntry(k, (v as num).toInt()));
+          final max = body['max'];
+          if (max is num) _max = max.toInt();
+          final resets = body['resets'];
+          if (resets is String && resets.isNotEmpty) _cycle = resets;
+          final won = body['won'];
+          if (won is List) {
+            _won
+              ..clear()
+              ..addAll(won.whereType<String>());
+          }
           await _persist();
           notifyListeners();
         }
@@ -156,7 +249,11 @@ class VoteService extends ChangeNotifier {
     final client = clientOverride ?? http.Client();
     try {
       for (final cc in _pending.keys.toList()) {
-        final vote = _pending[cc]!;
+        // Two votes in quick succession start two drains, each over its own
+        // snapshot of the queue. Whichever gets there first removes the entry,
+        // so the other has to find it gone rather than assert on it.
+        final vote = _pending[cc];
+        if (vote == null) continue;
         try {
           final res = await client
               .post(Uri.parse(endpoint),
@@ -186,9 +283,14 @@ class VoteService extends ChangeNotifier {
   Future<void> _persist() async {
     final p = _prefs;
     if (p == null) return;
-    await p.setStringList(_kMine, _mine.toList());
+    await p.setStringList(_kMine, _mine.keys.toList());
+    await p.setString(_kMineCycles, json.encode(_mine));
     await p.setString(_kPending, json.encode(_pending));
     final c = _counts;
     if (c != null) await p.setString(_kCounts, json.encode(c));
+    final cycle = _cycle;
+    if (cycle != null) await p.setString(_kCycle, cycle);
+    final max = _max;
+    if (max != null) await p.setInt(_kMax, max);
   }
 }

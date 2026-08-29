@@ -5,12 +5,15 @@ import 'package:flutter/services.dart' show MissingPluginException;
 
 import '../core/app_telemetry.dart';
 import '../core/async_gate.dart';
+import '../core/connectivity.dart';
 import '../core/device_link.dart';
 import '../core/haptics.dart';
 import '../core/ip_lookup.dart';
 import '../core/location.dart';
+import '../core/notifications.dart';
 import '../core/ping.dart';
 import '../core/premium.dart';
+import '../core/premium_catalog.dart';
 import '../core/profile_store.dart';
 import '../core/provisioning.dart';
 import '../core/proxy_profile.dart';
@@ -26,9 +29,47 @@ import '../core/wg_profile.dart';
 import '../core/wg_register.dart';
 import '../core/wg_singbox.dart';
 import '../core/wg_speed_mode.dart';
+import '../ui/strings.dart';
 import '../vpn_controller.dart';
 
 enum ConnState { disconnected, connecting, connected, error }
+
+/// What the user's server list is made of. It decides what the app promotes:
+/// a subscriber with imports of their own gets the hideip.net group marked out
+/// (`mixed`), a subscriber with nothing else gets no marking at all (`hip`,
+/// because everything is ours and saying so on every row is noise), and
+/// someone with no subscription gets locked rows and the upsell (`byo`).
+enum Mix { byo, mixed, hip }
+
+/// What the OS says about the VPN configuration this app needs.
+///
+/// [unknown] is not [denied]. `prepare()` answering false can mean the user
+/// said no, or that the answer never came back inside the guard window, or
+/// that the channel broke; only a real refusal may put the app into the
+/// declined state, because that state turns Connect off.
+enum VpnPerm { unknown, granted, denied }
+
+/// What a list of [profiles] plus an entitlement adds up to.
+///
+/// The rule, from `HideIP App 1.1.0.html`:
+/// `mix = !subscribed ? 'byo' : ownLocs.length ? 'mixed' : 'hip'`. Note that
+/// it keys off `premium` on the profile, never off a name: a user is free to
+/// call their own server "hideip", and it stays theirs.
+Mix mixOf(Iterable<ProxyProfile> profiles, {required bool premiumOn}) {
+  if (!premiumOn) return Mix.byo;
+  return profiles.any((p) => !p.premium) ? Mix.mixed : Mix.hip;
+}
+
+/// A session length in the design's shape: `4m 07s` below the hour,
+/// `2h 05m` above it. Ported from `fmtDur` in
+/// `design/app-1_1_0/screens-home.jsx`.
+String fmtDur(Duration d) {
+  final total = d.inSeconds < 0 ? 0 : d.inSeconds;
+  final h = total ~/ 3600;
+  final m = (total % 3600) ~/ 60;
+  final s = total % 60;
+  return h > 0 ? S.durHours(h, m) : S.durMinutes(m, s);
+}
 
 /// Single source of truth for the UI: holds the profile list, the selected
 /// profile, the connection state, the current public IP, and bridges the
@@ -69,8 +110,26 @@ class AppState extends ChangeNotifier {
   SpeedFallbackReason _fallback = SpeedFallbackReason.off;
   bool _wgDeviceLimit = false;
   // Guards the probe so a disconnect (or a second connect) mid-window cannot
-  // have a late probe tear down a tunnel it no longer owns.
+  // have a late probe tear down a tunnel it no longer owns. The connecting
+  // timers below ride on the same counter rather than inventing a second one.
   int _connectGeneration = 0;
+
+  // --- Connecting: permission, network, patience --------------------------
+  VpnPerm _vpnPerm = VpnPerm.unknown;
+  bool _vpnPrepared = false;
+  DateTime? _connectedAt;
+  bool _connSlow = false;
+  bool _showConnectFailed = false;
+  Timer? _slowTimer;
+  Timer? _failTimer;
+  late final ConnectivityWatch _connectivity =
+      ConnectivityWatch(onChanged: _onConnectivity);
+  bool _offline = false;
+
+  // hideip.net locations shown without a subscription: real hosts from the
+  // signed public catalog, real latency, no credential. Kept apart from
+  // [_profiles] on purpose; nothing here can ever reach the tunnel.
+  List<Location> _lockedLocations = const [];
 
   List<ProxyProfile> get profiles => List.unmodifiable(_profiles);
   int get selectedIndex => _selected;
@@ -138,10 +197,53 @@ class AppState extends ChangeNotifier {
   /// Why Speed mode is not carrying the traffic right now.
   SpeedFallbackReason get speedFallback => _fallback;
 
-  /// The quiet status line for the home screen ("speed mode" /
-  /// "stealth fallback"), or null when there is nothing to say.
-  String? get speedStatus =>
-      isConnected ? speedStatusLine(_path, _fallback) : null;
+  /// The tunnel chip on the session card: what is carrying this session,
+  /// always in words. Advanced view carries the full `proto · host` chain.
+  String get tunnelChip => tunnelChipLabel(
+        _path,
+        _fallback,
+        activeLocation,
+        advanced: _prefs.advanced,
+      );
+
+  /// When the live session started, or null while nothing is up. Drives the
+  /// duration on the session card.
+  DateTime? get connectedAt => _connectedAt;
+
+  /// How long the live session has been up, or null while nothing is up.
+  Duration? get sessionLength {
+    final start = _connectedAt;
+    return start == null ? null : DateTime.now().difference(start);
+  }
+
+  /// What the user's list is made of. Derived on every read; nothing about
+  /// this is ever stored, so it cannot fall out of step with the entitlement.
+  Mix get mix => mixOf(_profiles, premiumOn: premium.isOn);
+
+  /// hideip.net locations the user cannot use yet, cheapest latency first.
+  /// Empty while a subscription is live: they are then real servers in
+  /// [profiles] instead.
+  List<Location> get lockedLocations => List.unmodifiable(_lockedLocations);
+
+  /// What the OS says about the VPN configuration.
+  VpnPerm get vpnPerm => _vpnPerm;
+
+  /// Whether the one-off explanation should be shown before the first
+  /// Connect. It lives above [connect]: the sheet is a tap-driven courtesy,
+  /// and a connect that was not a tap (Always-on, auto-connect, a deep link)
+  /// goes straight to the system dialog as it always did.
+  bool get needsVpnPrimer => !_prefs.vpnPermAsked && !_vpnPrepared;
+
+  /// True when the device has no network at all. Connect is off, its reason
+  /// is stated under it, and the failure sheet stays shut.
+  bool get offline => _offline;
+
+  /// True ten seconds into a connect that has not landed yet.
+  bool get connSlow => _connSlow;
+
+  /// True when a connect attempt gave up and the failure sheet is owed. The
+  /// screen that shows it calls [dismissConnectFailed] afterwards.
+  bool get showConnectFailed => _showConnectFailed;
 
   /// Whether the subscription has already used its five WireGuard slots.
   bool get speedDeviceLimit => _wgDeviceLimit;
@@ -219,6 +321,13 @@ class AppState extends ChangeNotifier {
       // on availability, so a rebuild has to follow when it flips.
       onAvailability: notifyListeners,
     );
+    // Whether the OS already holds a VPN configuration for this app. Read
+    // once here so the pre-prompt is skipped for anyone who has been through
+    // the system dialog before, including on a reinstall over a live profile.
+    _vpnPrepared = await VpnController.isPrepared();
+    if (_vpnPrepared) _vpnPerm = VpnPerm.granted;
+    unawaited(_connectivity.start());
+    unawaited(Notifications.init());
     _profiles.addAll(await ProfileStore.load());
     _subInfos.addAll(await SubInfoStore.load());
     await _loadSubToken();
@@ -240,9 +349,43 @@ class AppState extends ChangeNotifier {
     // On a cold start we ignore a stale native error when nothing is running:
     // a leftover error from a previous session must not greet the user.
     _syncStatus(initial: true);
+    // The hideip.net fleet as it is shown to someone who has not bought it.
+    unawaited(refreshLockedLocations());
     if (_prefs.autoConnect && _profiles.isNotEmpty && !isConnected) {
       connect();
     }
+  }
+
+  // --- Locked hideip.net locations ----------------------------------------
+
+  /// Reads the signed public catalog and keeps the locked rows current.
+  ///
+  /// Runs without a subscription and without an identity, which is the whole
+  /// point: the locations that come with a plan are visible, with their real
+  /// latency, before anyone pays for them. With a live subscription there is
+  /// nothing to show, because those same servers are real profiles by then.
+  Future<void> refreshLockedLocations() async {
+    if (premium.isOn) {
+      if (_lockedLocations.isEmpty) return;
+      _lockedLocations = const [];
+      notifyListeners();
+      return;
+    }
+    final fresh = await PremiumCatalog.fetchLocked();
+    if (fresh.isEmpty || premium.isOn) return;
+    _lockedLocations = fresh;
+    notifyListeners();
+    // Real bars need a real measurement; the row would rather say nothing
+    // than show an invented number.
+    await forEachBounded(
+      fresh,
+      limit: 8,
+      action: (l) async {
+        final p = l.profile;
+        _pings['${p.server}:${p.port}'] = await Ping.measure(p.server, p.port);
+        notifyListeners();
+      },
+    );
   }
 
   // --- Premium -----------------------------------------------------------
@@ -275,7 +418,16 @@ class AppState extends ChangeNotifier {
   /// Re-check the store for an existing subscription.
   Future<void> restorePurchases() async {
     final restored = await _purchases.restore();
-    showToast(restored ? 'Purchases restored' : 'No purchases to restore');
+    if (restored) {
+      showToast(S.toastRestored);
+      return;
+    }
+    // On a subscription that has run out, "nothing to restore" reads as a
+    // failure of the restore. The truthful line is that there is no live
+    // subscription to find, which is a different sentence.
+    showToast(premium.status == PremiumStatus.expired
+        ? S.toastNoSubscription
+        : S.toastNothingToRestore);
   }
 
   /// Exchange the signed purchase proof for tunnel credentials and pull the
@@ -381,9 +533,9 @@ class AppState extends ChangeNotifier {
     if (on) {
       _wgDeviceLimit = false;
       await _refreshWireGuard(null);
-      if (_wgDeviceLimit) {
-        showToast('Speed mode is already set up on 5 devices');
-      }
+      // The device limit is reported by the Settings sheet (F5), not by a
+      // toast: it is an explanation with an action, not a notice in passing.
+      // [speedDeviceLimit] is what the screen reads.
     } else {
       // Best effort: a failed revoke only costs a slot until the
       // subscription lapses, and must not block the toggle.
@@ -556,6 +708,34 @@ class AppState extends ChangeNotifier {
 
   // --- UI preferences / toast --------------------------------------------
 
+  /// Switch the palette. Three states: the system one is the default and the
+  /// one most people never change.
+  Future<void> setThemeMode(AppThemeMode mode) =>
+      updatePrefs(_prefs.copyWith(themeMode: mode));
+
+  /// Hide the Speed mode upsell row for fourteen days.
+  Future<void> snoozeUpsell() => updatePrefs(_prefs.copyWith(
+        upsellSnoozeUntil: DateTime.now()
+            .add(const Duration(days: 14))
+            .millisecondsSinceEpoch,
+      ));
+
+  /// Whether the Speed mode upsell may show right now.
+  bool get upsellAllowed => _prefs.upsellAllowed(DateTime.now());
+
+  /// The system notification permission, with "never asked" told apart from
+  /// "asked and refused" by our own record of having put the dialog up.
+  Future<NotifPerm> notifPermission() =>
+      Notifications.permission(asked: _prefs.notifAsked);
+
+  /// Puts the system notification dialog up, once. The record is written
+  /// whatever the answer is, so nobody is asked a second time.
+  Future<NotifPerm> requestNotifPermission() async {
+    final result = await Notifications.request();
+    await updatePrefs(_prefs.copyWith(notifAsked: true));
+    return result;
+  }
+
   Future<void> updatePrefs(UiPrefs next) async {
     final alwaysOnChanged = next.alwaysOn != _prefs.alwaysOn;
     final killSwitchChanged = next.killSwitch != _prefs.killSwitch;
@@ -580,6 +760,9 @@ class AppState extends ChangeNotifier {
   void dispose() {
     _statusPoll?.cancel();
     _toastTimer?.cancel();
+    _slowTimer?.cancel();
+    _failTimer?.cancel();
+    unawaited(_connectivity.dispose());
     _purchases.dispose();
     super.dispose();
   }
@@ -738,31 +921,48 @@ class AppState extends ChangeNotifier {
   // --- Connection ------------------------------------------------------------
 
   Future<void> connect() async {
+    // No network, nothing to blame the tunnel for. This is not an error and
+    // it does not raise the failure sheet; the reason sits under the button.
+    if (_offline) return;
     // Auto mode resolves to the best probed server; otherwise the selection.
     final profile = activeLocation?.profile ?? selected;
     if (profile == null) {
-      _setError('Select a server first.');
+      _setError(S.errNoServer);
       return;
     }
     _conn = ConnState.connecting;
     _error = null;
+    _connSlow = false;
+    _showConnectFailed = false;
+    final generation = ++_connectGeneration;
+    _startConnectTimers(generation);
     notifyListeners();
 
     try {
       // The OS consent dialog returns via the platform channel. Guard against a
       // dropped/never-delivered result so the UI can't get stuck "Connecting…".
+      var timedOut = false;
       final ok = await VpnController.prepare().timeout(
         const Duration(seconds: 60),
-        onTimeout: () => false,
+        onTimeout: () {
+          timedOut = true;
+          return false;
+        },
       );
       if (!ok) {
         // User cancelled consent (or it timed out): return to a clean state.
+        _clearConnectTimers();
         _conn = ConnState.disconnected;
         _error = null;
+        // A guard that fired is not an answer from the user: the permission
+        // stays unknown and the next Connect asks again. A refusal is an
+        // answer, and it is what turns Connect off until settings change.
+        if (!timedOut) _vpnPerm = VpnPerm.denied;
         notifyListeners();
         return;
       }
-      final generation = ++_connectGeneration;
+      _vpnPerm = VpnPerm.granted;
+      _vpnPrepared = true;
       // Speed mode gets first refusal; anything unclear falls through to the
       // stealth profile below, which is the path that always works.
       final decision = SpeedModeDecision.decide(
@@ -787,8 +987,10 @@ class AppState extends ChangeNotifier {
         await VpnController.start(config, label: profile.name);
       }
       _startStatusPoll();
+      _clearConnectTimers();
       // Optimistic; the poll will confirm/flip to error.
       _conn = ConnState.connected;
+      _connectedAt ??= DateTime.now();
       Haptics.success();
       notifyListeners();
       _count(AppEvent.firstConnect);
@@ -801,16 +1003,116 @@ class AppState extends ChangeNotifier {
     } on MissingPluginException {
       // No native VPN side on this platform yet (iOS before the PacketTunnel
       // port). Keep the rest of the app usable; only connecting is off-limits.
-      _setError('VPN is not yet supported on this platform.');
+      _clearConnectTimers();
+      _setError(S.errNoPlatform);
     } catch (e) {
-      _setError('Failed to connect: $e');
+      _clearConnectTimers();
+      _setError(S.errConnect(e));
+      _showConnectFailed = !_offline;
+      notifyListeners();
     }
+  }
+
+  /// Cancel a connect in progress. The CTA stays live while Connecting for
+  /// exactly this: a handshake that is going nowhere must have a way out that
+  /// is not force-quitting the app.
+  Future<void> cancel() async {
+    if (_conn != ConnState.connecting) return;
+    _connectGeneration++;
+    _clearConnectTimers();
+    try {
+      await VpnController.stop();
+    } catch (_) {
+      // Nothing may have started yet; the state below is the answer either way.
+    }
+    _statusPoll?.cancel();
+    _conn = ConnState.disconnected;
+    _error = null;
+    _connectedAt = null;
+    _path = TunnelPath.stealth;
+    notifyListeners();
+  }
+
+  /// The two things a slow connect is owed: a line after ten seconds, and an
+  /// explanation after twenty five. Both check the generation before acting,
+  /// the same guard the WireGuard probe uses, so a cancelled or superseded
+  /// attempt cannot speak for the current one.
+  void _startConnectTimers(int generation) {
+    _clearConnectTimers();
+    _slowTimer = Timer(const Duration(seconds: 10), () {
+      if (generation != _connectGeneration) return;
+      if (_conn != ConnState.connecting) return;
+      _connSlow = true;
+      notifyListeners();
+    });
+    _failTimer = Timer(const Duration(seconds: 25), () {
+      if (generation != _connectGeneration) return;
+      if (_conn != ConnState.connecting) return;
+      _connectGeneration++;
+      _clearConnectTimers();
+      unawaited(VpnController.stop().catchError((_) {}));
+      _statusPoll?.cancel();
+      _conn = ConnState.disconnected;
+      _error = null;
+      _connectedAt = null;
+      // Offline suppresses the sheet entirely: see [connect].
+      _showConnectFailed = !_offline;
+      notifyListeners();
+    });
+  }
+
+  void _clearConnectTimers() {
+    _slowTimer?.cancel();
+    _slowTimer = null;
+    _failTimer?.cancel();
+    _failTimer = null;
+    if (_connSlow) _connSlow = false;
+  }
+
+  /// The screen has shown the failure sheet; do not show it again.
+  void dismissConnectFailed() {
+    if (!_showConnectFailed) return;
+    _showConnectFailed = false;
+    notifyListeners();
+  }
+
+  /// Records that the one-off VPN explanation has been shown. Called whether
+  /// the user continued or not: the explanation is offered once.
+  Future<void> markVpnPrimerSeen() =>
+      updatePrefs(_prefs.copyWith(vpnPermAsked: true));
+
+  /// Re-reads the OS answer. Called when the app comes back to the
+  /// foreground, so someone who went to system settings and allowed the
+  /// configuration returns to a live Connect button with no extra tap.
+  Future<void> refreshVpnPermission() async {
+    final prepared = await VpnController.isPrepared();
+    final perm = prepared ? VpnPerm.granted : _vpnPerm;
+    if (prepared == _vpnPrepared && perm == _vpnPerm) return;
+    _vpnPrepared = prepared;
+    _vpnPerm = perm;
+    notifyListeners();
+  }
+
+  /// The network came or went. Losing it while connecting ends the attempt
+  /// quietly and takes the failure sheet with it; there is nothing to explain
+  /// about a server that was never reachable.
+  void _onConnectivity(bool offline) {
+    _offline = offline;
+    if (offline) {
+      _showConnectFailed = false;
+      if (_conn == ConnState.connecting) {
+        unawaited(cancel());
+        return;
+      }
+    }
+    notifyListeners();
   }
 
   Future<void> disconnect() async {
     // Invalidate any in-flight WireGuard probe: it must not tear down or
     // reconnect a tunnel the user has already dismissed.
     _connectGeneration++;
+    _clearConnectTimers();
     try {
       await VpnController.stop();
     } catch (_) {
@@ -819,6 +1121,7 @@ class AppState extends ChangeNotifier {
     _statusPoll?.cancel();
     _conn = ConnState.disconnected;
     _error = null;
+    _connectedAt = null;
     _path = TunnelPath.stealth;
     notifyListeners();
     _refreshIpAfterToggle();
@@ -963,11 +1266,13 @@ class AppState extends ChangeNotifier {
       _conn = newState;
       if (newState == ConnState.connected) {
         Haptics.success();
+        _connectedAt ??= DateTime.now();
         _startStatusPoll();
       }
       if (newState == ConnState.disconnected) {
         _statusPoll?.cancel();
         _stats = VpnStats.zero;
+        _connectedAt = null;
       }
       notifyListeners();
       refreshIp();

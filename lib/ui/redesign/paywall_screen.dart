@@ -90,8 +90,17 @@ class PaywallScreen extends StatefulWidget {
   final AppState state;
   final HipNav nav;
   final HipScreen from;
-  const PaywallScreen(
-      {super.key, required this.state, required this.nav, required this.from});
+
+  /// The locked location the user tapped to get here ([Location.id]), when
+  /// there was one. F4 turns it into the personalised title.
+  final String? locId;
+  const PaywallScreen({
+    super.key,
+    required this.state,
+    required this.nav,
+    required this.from,
+    this.locId,
+  });
 
   @override
   State<PaywallScreen> createState() => _PaywallScreenState();
@@ -691,7 +700,8 @@ class PremiumManageScreen extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(0, 14, 0, 24),
                   child: HipCta('Restart Premium',
-                      onTap: () => nav.openPaywall(HipScreen.settings)),
+                      onTap: () =>
+                          nav.openPaywall(from: HipScreen.settings)),
                 ),
             ],
           ),
@@ -770,7 +780,8 @@ class TrialExpiredScreen extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(22, 14, 22, 20),
           child: Column(children: [
             HipCta('Continue with Premium',
-                onTap: () => nav.openPaywall(HipScreen.trialExpired)),
+                onTap: () =>
+                    nav.openPaywall(from: HipScreen.trialExpired)),
             const SizedBox(height: 8),
             HipCta('Use your own connection link',
                 quiet: true, onTap: () => nav.openImport()),

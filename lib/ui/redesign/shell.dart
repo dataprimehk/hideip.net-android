@@ -9,9 +9,11 @@ import 'package:flutter/services.dart';
 import '../../core/deep_link.dart';
 import '../../core/import_payload.dart';
 import '../../core/location.dart';
+import '../../core/ui_prefs.dart';
 import '../../state/app_state.dart';
 import 'detail_screen.dart';
 import 'hip.dart';
+import 'hip_sheet.dart';
 import 'home_hero.dart';
 import 'import_screen.dart';
 import 'linked_devices_screen.dart';
@@ -42,11 +44,92 @@ enum HipScreen {
   linkedDevices,
 }
 
-/// In-app navigator used by every redesign screen. A tiny state machine (the
-/// same one the design prototype uses) instead of a Navigator stack: screens
+/// One entry on the in-app back stack: the screen and the context bag it was
+/// showing at the time.
+typedef HipStackEntry = ({HipScreen screen, Object? ctx});
+
+/// The in-app back stack.
+///
+/// Kept apart from the widget so the navigation rules can be read (and
+/// tested) on their own. The rules, from the design prototype:
+///
+///  * [go] pushes the screen being left, with its context, and shows the new
+///    one. Returning later restores that exact context.
+///  * Home is the root. Arriving at Home empties the stack: a finished flow
+///    (an import, a purchase) is not something to walk back out of.
+///  * A screen already on the stack is dropped from it before being pushed
+///    again, so the stack holds each screen at most once and back cannot loop.
+///  * Re-entering the screen already showing changes only its context.
+///  * [back] pops one entry. With an empty stack it lands on Home, and from a
+///    root screen [backTarget] is null so the shell can hand the gesture to
+///    the OS instead.
+class HipNavStack {
+  final List<HipStackEntry> _entries = [];
+
+  /// The screen showing right now.
+  HipScreen screen;
+
+  /// The context bag the current screen was opened with.
+  Object? ctx;
+
+  HipNavStack({this.screen = HipScreen.home, this.ctx});
+
+  List<HipStackEntry> get entries => List.unmodifiable(_entries);
+  int get depth => _entries.length;
+
+  void go(HipScreen next, [Object? nextCtx]) {
+    if (next == HipScreen.home) {
+      _entries.clear();
+    } else if (next != screen) {
+      _entries.removeWhere((e) => e.screen == next);
+      _entries.add((screen: screen, ctx: ctx));
+    }
+    ctx = nextCtx;
+    screen = next;
+  }
+
+  void back() {
+    final prev = _entries.isNotEmpty
+        ? _entries.removeLast()
+        : (screen: HipScreen.home, ctx: null);
+    ctx = prev.ctx;
+    screen = prev.screen;
+  }
+
+  /// Where back leads, or null when back belongs to the OS.
+  HipScreen? get backTarget {
+    if (_entries.isNotEmpty) return _entries.last.screen;
+    if (screen == HipScreen.home || screen == HipScreen.onboarding) return null;
+    return HipScreen.home;
+  }
+}
+
+/// In-app navigator used by every redesign screen. Not a Navigator: screens
 /// are few, transitions are uniform, and the VPN state lives above them all.
+/// It is a real stack though, the same one the design prototype keeps
+/// (`HideIP App 1.1.0.html`), rather than a fixed parent-of table.
+///
+/// [go] pushes the current screen and moves to a new one; [back] returns to
+/// exactly where the user came from, with the context that screen had. Home is
+/// the root: going there clears the stack, because a finished flow (an import,
+/// a purchase) is not something to walk back out of. A screen already on the
+/// stack is never pushed twice, so back can never loop.
 class HipNav {
-  final void Function(HipScreen screen) go;
+  final void Function(HipScreen screen, [Object? ctx]) go;
+
+  /// Return to the previous screen and its context. From the root this is a
+  /// no-op; the shell hands the gesture to the OS instead.
+  final VoidCallback back;
+
+  /// The context bag the current screen was opened with, or null. Screens use
+  /// it to restore what they had open (a group, a search box) when the user
+  /// comes back to them.
+  final Object? Function() ctx;
+
+  /// Opens a sheet over whatever is on screen, without the caller needing a
+  /// context that sits under a Navigator.
+  final Future<T?> Function<T>(List<Widget> children) showSheet;
+
   final void Function(Location loc) openDetail;
 
   /// Opens the import screen remembering where it was launched from, so back
@@ -60,8 +143,10 @@ class HipNav {
   final void Function(String text) openImportWith;
 
   /// Opens the paywall remembering where it was launched from, so both back
-  /// gestures and a cancelled purchase return there.
-  final void Function(HipScreen from) openPaywall;
+  /// gestures and a cancelled purchase return there. [locId] names the
+  /// location a locked row was tapped on ([Location.id]), which is what lets
+  /// the paywall say "London is part of the plan" instead of a generic title.
+  final void Function({required HipScreen from, String? locId}) openPaywall;
 
   /// Screens with internal steps (onboarding beats, import phases) claim the
   /// system back gesture so it walks their steps before leaving the screen.
@@ -71,6 +156,9 @@ class HipNav {
 
   const HipNav({
     required this.go,
+    required this.back,
+    required this.ctx,
+    required this.showSheet,
     required this.openDetail,
     required this.openImport,
     required this.openImportWith,
@@ -90,12 +178,19 @@ class HipShell extends StatefulWidget {
 }
 
 class _HipShellState extends State<HipShell>
-    with SingleTickerProviderStateMixin {
-  HipScreen? _screen; // null until AppState.ready decides the entry screen
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  // null until AppState.ready decides the entry screen; the stack takes over
+  // from the first frame that has one.
+  HipScreen? _screen;
+  final HipNavStack _stack = HipNavStack();
   Location? _detailLoc;
   HipScreen _importFrom = HipScreen.home;
   HipScreen _paywallFrom = HipScreen.home;
+  String? _paywallLocId;
   VoidCallback? _backOverride;
+  // A context that sits under the shell's Navigator, so any screen can raise
+  // a sheet through `nav.showSheet` without holding one of its own.
+  BuildContext? _sheetContext;
 
   // Deep-link plumbing. A `hideip://` link parses into text the importer is
   // prefilled with; while onboarding is still up the link waits here and opens
@@ -123,14 +218,26 @@ class _HipShellState extends State<HipShell>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initDeepLinks();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _linkSub?.cancel();
     _swipeCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Someone who went to system settings to allow the VPN configuration
+    // comes back to a live Connect button, with no extra tap to clear the
+    // declined state.
+    if (state == AppLifecycleState.resumed) {
+      widget.state.refreshVpnPermission();
+    }
   }
 
   /// Wires the `hideip://` deep-link sources: the cold-start link (app opened
@@ -202,29 +309,58 @@ class _HipShellState extends State<HipShell>
   }
 
   void _openImportWith(String text) {
+    _importInitialText = text;
+    _importFrom = HipScreen.home;
+    _go(HipScreen.import);
+  }
+
+  /// Push [screen] onto the stack and show it.
+  ///
+  /// Home is the root: arriving there empties the stack. Re-entering the
+  /// screen already showing changes only its context. Any other target first
+  /// drops an older copy of itself from the stack, so a back walk is always
+  /// finite and never revisits a screen twice.
+  void _go(HipScreen screen, [Object? ctx]) {
     setState(() {
-      _importInitialText = text;
-      _importFrom = HipScreen.home;
-      _screen = HipScreen.import;
+      _stack.go(screen, ctx);
+      _screen = _stack.screen;
     });
   }
 
+  /// Pop back to where the user came from, restoring that screen's context.
+  void _back() {
+    setState(() {
+      _stack.back();
+      _screen = _stack.screen;
+    });
+  }
+
+  Future<T?> _showSheet<T>(List<Widget> children) {
+    final context = _sheetContext;
+    if (context == null) return Future<T?>.value(null);
+    return showHipSheet<T>(context, children: children);
+  }
+
   late final HipNav _nav = HipNav(
-    go: (s) => setState(() => _screen = s),
-    openDetail: (loc) => setState(() {
+    go: _go,
+    back: _back,
+    ctx: () => _stack.ctx,
+    showSheet: _showSheet,
+    openDetail: (loc) {
       _detailLoc = loc;
-      _screen = HipScreen.detail;
-    }),
-    openImport: () => setState(() {
+      _go(HipScreen.detail);
+    },
+    openImport: () {
       _importInitialText = null;
       _importFrom = _screen ?? HipScreen.home;
-      _screen = HipScreen.import;
-    }),
+      _go(HipScreen.import);
+    },
     openImportWith: _openImportWith,
-    openPaywall: (from) => setState(() {
+    openPaywall: ({required HipScreen from, String? locId}) {
       _paywallFrom = from;
-      _screen = HipScreen.paywall;
-    }),
+      _paywallLocId = locId;
+      _go(HipScreen.paywall, locId);
+    },
     claimBack: (h) => _backOverride = h,
     // Only the claimant may release; a new screen may already hold the claim
     // by the time the old one is disposed.
@@ -233,29 +369,16 @@ class _HipShellState extends State<HipShell>
     },
   );
 
-  /// Where a back gesture leads from [s], or null when [s] is a root screen
-  /// and back belongs to the OS.
-  HipScreen? _backTargetOf(HipScreen? s) => switch (s) {
-        HipScreen.locations || HipScreen.settings => HipScreen.home,
-        HipScreen.detail => HipScreen.locations,
-        HipScreen.import => _importFrom,
-        HipScreen.paywall => _paywallFrom,
-        HipScreen.premium || HipScreen.linkedDevices => HipScreen.settings,
-        HipScreen.trialExpired => HipScreen.home,
-        _ => null,
-      };
-
-  /// The system back gesture, mapped onto the same hierarchy the in-app back
-  /// arrows use. Only the two root screens hand back to the OS.
+  /// The system back gesture, on the same stack the in-app back arrows walk.
+  /// Only the root screens hand back to the OS.
   void _systemBack() {
     final claimed = _backOverride;
     if (claimed != null) {
       claimed();
       return;
     }
-    final target = _backTargetOf(_screen);
-    if (target != null) {
-      _nav.go(target);
+    if (_stack.backTarget != null) {
+      _back();
     } else {
       SystemNavigator.pop();
     }
@@ -271,7 +394,7 @@ class _HipShellState extends State<HipShell>
       _swipeClaimed = true;
       return;
     }
-    final target = _backTargetOf(_screen);
+    final target = _stack.backTarget;
     if (target == null) return; // root screen: never background the app
     setState(() => _swipeTarget = target);
   }
@@ -305,11 +428,13 @@ class _HipShellState extends State<HipShell>
     }
     if (!mounted) return;
     setState(() {
-      if (commit) _screen = target;
       _swipeTarget = null;
       _swipeCtrl.value = 0;
       _swipeSettling = false;
     });
+    // The peek previewed the back target; committing takes the same route the
+    // arrow does, so the stack and the context come back with it.
+    if (commit) _back();
   }
 
   Widget _buildScreen(HipScreen s, AppState state) => switch (s) {
@@ -328,8 +453,12 @@ class _HipShellState extends State<HipShell>
         HipScreen.settings => SettingsScreen(state: state, nav: _nav),
         HipScreen.detail =>
           DetailScreen(state: state, nav: _nav, location: _detailLoc!),
-        HipScreen.paywall =>
-          PaywallScreen(state: state, nav: _nav, from: _paywallFrom),
+        HipScreen.paywall => PaywallScreen(
+            state: state,
+            nav: _nav,
+            from: _paywallFrom,
+            locId: _paywallLocId,
+          ),
         HipScreen.premium => PremiumManageScreen(state: state, nav: _nav),
         HipScreen.trialExpired => TrialExpiredScreen(state: state, nav: _nav),
         HipScreen.linkedDevices =>
@@ -387,9 +516,14 @@ class _HipShellState extends State<HipShell>
         }
         // Resolve the token palette for this frame; the prefs change that
         // flips it already rebuilds the whole tree below.
-        Hip.dm = state.prefs.darkMode;
-        _screen ??=
-            state.prefs.onboarded ? HipScreen.home : HipScreen.onboarding;
+        Hip.dm = _darkFor(context, state.prefs.themeMode);
+        Hip.reducedMotion = MediaQuery.disableAnimationsOf(context);
+        if (_screen == null) {
+          _screen = state.prefs.onboarded
+              ? HipScreen.home
+              : HipScreen.onboarding;
+          _stack.screen = _screen!;
+        }
 
         // A deep link that arrived during onboarding lands on import once the
         // user finishes and the shell leaves the onboarding screen.
@@ -450,16 +584,21 @@ class _HipShellState extends State<HipShell>
               },
               child: Scaffold(
                 backgroundColor: onDark ? Hip.dark : Hip.surface,
-                body: Stack(children: [
+                body: Builder(builder: (context) {
+                  // Captured once per frame: `nav.showSheet` needs a context
+                  // under this Navigator, and no screen should have to own one.
+                  _sheetContext = context;
+                  return Stack(children: [
                   content,
                   if (state.toast != null)
                     Positioned(
                       left: 0,
                       right: 0,
-                      bottom: 96,
+                      bottom: 132,
                       child: Center(child: HipToast(state.toast!)),
                     ),
-                ]),
+                ]);
+                }),
               ),
             ),
           ),
@@ -468,6 +607,15 @@ class _HipShellState extends State<HipShell>
     );
   }
 }
+
+/// Whether the app paints dark right now. Three states, and only the third
+/// one asks the platform anything.
+bool _darkFor(BuildContext context, AppThemeMode mode) => switch (mode) {
+      AppThemeMode.light => false,
+      AppThemeMode.dark => true,
+      AppThemeMode.system =>
+        MediaQuery.platformBrightnessOf(context) == Brightness.dark,
+    };
 
 /// A horizontal drag that only enters the gesture arena for pointers that
 /// land within the left screen edge, mirroring the native iOS back gesture.

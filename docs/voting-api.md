@@ -23,17 +23,32 @@ Base URL: `https://hideip.net/api/votes`
 
 ### GET /api/votes
 
-Returns all non-zero counters.
+Returns all non-zero counters, plus the current voting cycle.
 
 ```
 200 OK
-{"votes": {"076": 141, "356": 95}}
+{"votes": {"076": 141, "356": 95},
+ "max": 3,
+ "resets": "September 1",
+ "won": ["784"]}
 ```
 
 Keys are ISO 3166-1 numeric codes (zero-padded strings, as used by the
 world-atlas geometry the map is built from). Values are non-negative integers.
 Countries without votes may be omitted. A `Cache-Control: max-age=60` header
 is recommended; the client also caches the last answer on disk.
+
+- `max` (optional, integer): how many countries one device may vote for in the
+  current cycle. The client shows "N of M left" only once this has arrived, and
+  it does not enforce a limit nobody stated.
+- `resets` (optional, string): when the allowance resets, already formatted for
+  display. The client prints it verbatim and never formats a date of its own.
+  It also doubles as the cycle's identity: the client records which cycle each
+  vote was cast in, so when this value changes, older votes still show as cast
+  but stop counting against the allowance.
+- `won` (optional, array of country codes): countries whose vote already won a
+  round and went live. Drives the trophy on the map pin and the winner card in
+  the locations list.
 
 ### POST /api/votes
 
@@ -60,6 +75,12 @@ Content-Type: application/json
 ## Client behaviour (already shipped)
 
 - One vote per country per install, toggleable; the voted set persists locally.
+- At most `max` countries per cycle. Retracting a vote gives the allowance
+  back; a vote carried over from a previous cycle stays visible but spends
+  nothing, so a reset genuinely hands the device a full allowance again.
+- The quota is a client-side courtesy, not a security control: the server still
+  applies its own abuse protection, and it must not need per-voter records to
+  do it.
 - Votes cast while offline (or before the backend exists) are queued and
   drained on the next successful contact.
 - Counts shown in the UI are the last server totals plus any queued local

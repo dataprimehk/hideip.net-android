@@ -180,7 +180,7 @@ class LocationsScreen extends StatelessWidget {
                       subtitle: 'Fast locations run by hideip.net',
                       trailing: Icon(Icons.chevron_right,
                           size: 18, color: Hip.muted2),
-                      onTap: () => nav.openPaywall(HipScreen.locations),
+                      onTap: () => nav.openPaywall(from: HipScreen.locations),
                     ),
                   ]),
               ],

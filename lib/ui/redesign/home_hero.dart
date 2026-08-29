@@ -250,7 +250,8 @@ class _HomeHeroScreenState extends State<HomeHeroScreen> {
                 // Which path the tunnel took ("speed mode" / "stealth
                 // fallback"). Deliberately quiet: falling back is the app
                 // working as designed, not something to alarm anyone with.
-                _SpeedLine(label: state.speedStatus),
+                _SpeedLine(
+                    label: state.isConnected ? state.tunnelChip : null),
                 const SizedBox(height: 18),
                 _IpLine(state: state, protectedNow: on),
                 const SizedBox(height: 16),

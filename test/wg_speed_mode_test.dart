@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hideip_vpn/core/location.dart';
+import 'package:hideip_vpn/core/proxy_profile.dart';
 import 'package:hideip_vpn/core/wg_profile.dart';
 import 'package:hideip_vpn/core/wg_speed_mode.dart';
 
@@ -185,29 +187,56 @@ void main() {
     });
   });
 
-  group('status line', () {
+  group('tunnel chip', () {
+    // The chip is the new signature: a Location comes in, and something
+    // always comes out. See test/tunnel_chip_test.dart for the full matrix.
+    final loc = Location.derive(
+      const ProxyProfile(
+        name: 'de-fra-reality-01',
+        protocol: 'vless',
+        server: '198.51.100.24',
+        port: 443,
+        outbound: {'type': 'vless'},
+      ),
+      0,
+    );
+
     test('names the speed path while WireGuard carries the traffic', () {
-      expect(speedStatusLine(TunnelPath.speed, SpeedFallbackReason.none),
-          'speed mode');
+      expect(
+        tunnelChipLabel(TunnelPath.speed, SpeedFallbackReason.none, loc),
+        'Speed mode · WireGuard',
+      );
     });
 
-    test('says stealth fallback only when Speed mode was actually wanted', () {
-      expect(speedStatusLine(TunnelPath.stealth, SpeedFallbackReason.blocked),
-          'stealth fallback');
+    test('names the network only when the network is the reason', () {
       expect(
-          speedStatusLine(TunnelPath.stealth, SpeedFallbackReason.deviceLimit),
-          'stealth fallback');
-      expect(speedStatusLine(TunnelPath.stealth, SpeedFallbackReason.noProfile),
-          'stealth fallback');
+        tunnelChipLabel(TunnelPath.stealth, SpeedFallbackReason.blocked, loc),
+        'Stealth · WireGuard blocked here',
+      );
+      expect(
+        tunnelChipLabel(
+            TunnelPath.stealth, SpeedFallbackReason.deviceLimit, loc),
+        'Stealth · VLESS',
+      );
+      expect(
+        tunnelChipLabel(TunnelPath.stealth, SpeedFallbackReason.noProfile, loc),
+        'Stealth · VLESS',
+      );
     });
 
-    test('stays quiet for users who never turned Speed mode on', () {
-      expect(speedStatusLine(TunnelPath.stealth, SpeedFallbackReason.off),
-          isNull);
+    test('never goes quiet, including for users who never turned it on', () {
+      for (final reason in SpeedFallbackReason.values) {
+        expect(tunnelChipLabel(TunnelPath.stealth, reason, loc), isNotEmpty);
+      }
       expect(
-          speedStatusLine(
-              TunnelPath.stealth, SpeedFallbackReason.noSubscription),
-          isNull);
+        tunnelChipLabel(TunnelPath.stealth, SpeedFallbackReason.off, loc),
+        'Stealth · VLESS',
+      );
+      expect(
+        tunnelChipLabel(
+            TunnelPath.stealth, SpeedFallbackReason.noSubscription, loc),
+        'Stealth · VLESS',
+      );
     });
   });
 }

@@ -13,6 +13,17 @@ class Location {
   final double? lat;
   final double? lon;
 
+  /// A hideip.net location the user cannot use yet: it comes from the signed
+  /// public catalog rather than from a provisioned profile, so it is shown
+  /// with its real latency and a padlock. Locked locations are never part of
+  /// [AppState.profiles] and can never reach the tunnel; the flag only says
+  /// how the row renders and where its tap goes.
+  final bool locked;
+
+  /// This location won a voting round. The trophy stays on it until the user
+  /// connects there once.
+  final bool won;
+
   const Location({
     required this.profile,
     required this.index,
@@ -22,10 +33,29 @@ class Location {
     this.provider,
     this.lat,
     this.lon,
+    this.locked = false,
+    this.won = false,
   });
+
+  Location copyWith({int? index, bool? locked, bool? won}) => Location(
+        profile: profile,
+        index: index ?? this.index,
+        city: city,
+        country: country,
+        cc: cc,
+        provider: provider,
+        lat: lat,
+        lon: lon,
+        locked: locked ?? this.locked,
+        won: won ?? this.won,
+      );
 
   String get rawName => profile.name;
   String get host => '${profile.server}:${profile.port}';
+
+  /// Stable identity for a row across rebuilds, and what the paywall is
+  /// handed so it can name the location the user tapped.
+  String get id => host;
   bool get premium => profile.premium;
 
   /// Short protocol label, e.g. "vless · reality" or "ss · shadowtls".

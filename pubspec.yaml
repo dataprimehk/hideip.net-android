@@ -56,6 +56,15 @@ dependencies:
   app_links: ^7.2.1
   in_app_purchase: ^3.3.0
   url_launcher: ^6.3.2
+  # Whether the device has any network at all. The Connect button and the
+  # "Connection failed" sheet both key off this: with no network there is
+  # nothing to blame the tunnel for.
+  connectivity_plus: ^6.1.0
+  # System permission state (notifications, camera) as three answers rather
+  # than two, so "never asked" and "denied" can be told apart.
+  permission_handler: ^12.0.0
+  # Local notifications: connection alerts and voting updates, two channels.
+  flutter_local_notifications: ^19.0.0
 
 dev_dependencies:
   flutter_test:

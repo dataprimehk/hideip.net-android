@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'core/ui_prefs.dart';
 import 'state/app_state.dart';
 import 'ui/brand.dart';
 import 'ui/redesign/shell.dart';
@@ -22,14 +23,26 @@ class HideipApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'hideip',
-      debugShowCheckedModeBanner: false,
-      // The 2.0 redesign ships one fixed palette on every platform: light
-      // content surfaces under a dark hero panel. A system-driven dark
-      // variant of the content surfaces is a later, deliberate pass.
-      theme: Brand.theme(Brightness.light),
-      home: HipShell(state: state),
+    // The palette is a setting with three states, and "System" is the
+    // default. Both themes are handed to MaterialApp so the platform answer
+    // is applied by the framework; the redesign's own tokens resolve against
+    // the same choice inside the shell.
+    return ListenableBuilder(
+      listenable: state,
+      builder: (context, _) => MaterialApp(
+        title: 'hideip',
+        debugShowCheckedModeBanner: false,
+        theme: Brand.theme(Brightness.light),
+        darkTheme: Brand.theme(Brightness.dark),
+        themeMode: _materialMode(state.prefs.themeMode),
+        home: HipShell(state: state),
+      ),
     );
   }
+
+  static ThemeMode _materialMode(AppThemeMode mode) => switch (mode) {
+        AppThemeMode.light => ThemeMode.light,
+        AppThemeMode.dark => ThemeMode.dark,
+        AppThemeMode.system => ThemeMode.system,
+      };
 }

@@ -1,3 +1,5 @@
+import '../ui/strings.dart';
+import 'location.dart';
 import 'wg_profile.dart';
 
 /// Which path the tunnel is taking right now.
@@ -33,20 +35,59 @@ enum SpeedFallbackReason {
   deviceLimit,
 }
 
-/// The one-line status the home screen shows under the connection state.
-/// Deliberately understated: Speed mode is a bonus, and falling back to the
-/// stealth tunnel is the app working as designed, not a failure.
-String? speedStatusLine(TunnelPath path, SpeedFallbackReason reason) {
-  if (path == TunnelPath.speed) return 'speed mode';
-  return switch (reason) {
-    SpeedFallbackReason.blocked => 'stealth fallback',
-    SpeedFallbackReason.deviceLimit => 'stealth fallback',
-    SpeedFallbackReason.noProfile => 'stealth fallback',
-    SpeedFallbackReason.off ||
-    SpeedFallbackReason.none ||
-    SpeedFallbackReason.noSubscription =>
-      null,
-  };
+/// The tunnel chip on the session card. Always says something.
+///
+/// This replaced a quiet line that returned null in the most common state, so
+/// most sessions said nothing at all about what was carrying them. The chip is
+/// text and it is always visible: what carries the session is the one fact the
+/// whole product is about, and it should never have to be inferred.
+///
+/// Simple view names the path in words. Advanced view swaps it for the full
+/// chain of the live location, `proto · host`, which is the same string the
+/// server rows print there.
+///
+/// [SpeedFallbackReason.blocked] is the only reason that is named, because it
+/// is the only one about the network the user is on. A device limit or a
+/// profile that has not registered yet are about the account, they are
+/// reported where they belong, and putting "WireGuard blocked here" on them
+/// would say something untrue about the network.
+String tunnelChipLabel(
+  TunnelPath path,
+  SpeedFallbackReason reason,
+  Location? location, {
+  bool advanced = false,
+}) {
+  if (advanced && location != null) {
+    return S.tunnelChain(location.protoLabel, location.host);
+  }
+  if (path == TunnelPath.speed) return S.tunnelSpeed;
+  if (reason == SpeedFallbackReason.blocked) return S.tunnelBlocked;
+  return S.tunnelStealth(protoShort(location) ?? S.tVless);
+}
+
+/// The short, human protocol name for a location: `vless · reality` reads as
+/// `VLESS`. Mirrors `PROTO_SHORT` / `protoShort` in
+/// `design/app-1_1_0/core.jsx`.
+String? protoShort(Location? location) {
+  if (location == null) return null;
+  final head = location.protoLabel.split('·').first.trim().toLowerCase();
+  if (head.isEmpty) return null;
+  return const {
+        'vless': 'VLESS',
+        'vmess': 'VMess',
+        'trojan': 'Trojan',
+        'ss': 'Shadowsocks',
+        'shadowsocks': 'Shadowsocks',
+        'hysteria2': 'Hysteria2',
+        'hy2': 'Hysteria2',
+        'tuic': 'TUIC',
+        'anytls': 'AnyTLS',
+        'socks': 'SOCKS',
+        'http': 'HTTP',
+        'reality': 'Reality',
+        'wireguard': 'WireGuard',
+      }[head] ??
+      head.toUpperCase();
 }
 
 /// Decides whether a connect attempt should try WireGuard first.

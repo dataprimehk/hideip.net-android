@@ -273,7 +273,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   Icons.shield_outlined,
                   'Get access from hideip.net',
                   'Try Premium free for 7 days; locations appear instantly',
-                  () => widget.nav.openPaywall(HipScreen.onboarding)),
+                  () => widget.nav.openPaywall(from: HipScreen.onboarding)),
             _opt(Icons.link, 'I have a link or QR code',
                 'From Telegram, email or a website: vless://, vmess://, anything',
                 _import),

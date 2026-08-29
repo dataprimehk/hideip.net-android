@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/premium.dart';
+import '../../core/ui_prefs.dart';
 import '../../state/app_state.dart';
 import '../../vpn_controller.dart';
 import 'hip.dart';
@@ -59,7 +60,7 @@ class SettingsScreen extends StatelessWidget {
                     trailing:
                         Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
                     onTap: () => premium.status == PremiumStatus.none
-                        ? nav.openPaywall(HipScreen.settings)
+                        ? nav.openPaywall(from: HipScreen.settings)
                         : nav.go(HipScreen.premium),
                   ),
                   // Only a phone that actually holds a provisioned
@@ -82,10 +83,14 @@ class SettingsScreen extends StatelessWidget {
                   leading: grayTile(Icons.dark_mode_outlined),
                   title: 'Dark mode',
                   subtitle: 'Darker surfaces across the whole app',
+                  // Placeholder wiring: F4 replaces this toggle with the
+                  // three-way Light / Dark / System segment the design asks
+                  // for. Until then the switch drives the same setting, with
+                  // System reading as off.
                   trailing: HipToggle(
-                    on: prefs.darkMode,
-                    onChanged: (v) =>
-                        state.updatePrefs(prefs.copyWith(darkMode: v)),
+                    on: prefs.themeMode == AppThemeMode.dark,
+                    onChanged: (v) => state.setThemeMode(
+                        v ? AppThemeMode.dark : AppThemeMode.light),
                   ),
                 ),
                 HipListRow(
@@ -158,7 +163,7 @@ class SettingsScreen extends StatelessWidget {
                         'locations; importing your own config is free.',
                     trailing:
                         Icon(Icons.lock_outline, size: 17, color: Hip.muted2),
-                    onTap: () => nav.openPaywall(HipScreen.settings),
+                    onTap: () => nav.openPaywall(from: HipScreen.settings),
                   ),
                 if (defaultTargetPlatform == TargetPlatform.android)
                   _AndroidAlwaysOnRows(state: state),

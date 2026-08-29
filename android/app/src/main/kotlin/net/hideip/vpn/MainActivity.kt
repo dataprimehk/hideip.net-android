@@ -24,6 +24,7 @@ import java.util.UUID
  *
  * Channel: net.hideip.vpn/control
  *   prepare() -> asks the OS for VPN consent if needed; returns true when ready
+ *   isPrepared() -> whether consent is already held (asks for nothing)
  *   start(config) -> launches HideipVpnService with the sing-box config JSON
  *   stop() -> stops the tunnel
  *   status() -> {running, error}
@@ -41,6 +42,9 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "prepare" -> handlePrepare(result)
+                    // Reads the existing VPN consent without asking for it, so
+                    // Dart can tell "never asked" apart from "refused".
+                    "isPrepared" -> result.success(VpnService.prepare(this) == null)
                     "start" -> {
                         val config = call.argument<String>("config")
                         if (config.isNullOrBlank()) {

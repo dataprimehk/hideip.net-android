@@ -54,6 +54,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Required by flutter_local_notifications, which uses java.time on
+        // minSdk levels that predate it. Nothing else in this module needs it.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
@@ -107,6 +110,7 @@ dependencies {
     // GPLv3 sing-box core built by scripts/build-libbox.sh from pinned source.
     implementation(files(libboxAar))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 
 flutter {

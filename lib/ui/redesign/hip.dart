@@ -28,7 +28,10 @@ class Hip {
   static Color get inkSoft =>
       dm ? Brand.hsl(220, 12, 78) : Brand.hsl(0, 0, 28);
   static Color get muted => dm ? Brand.hsl(220, 8, 58) : Brand.hsl(0, 0, 45);
-  static Color get muted2 => dm ? Brand.hsl(220, 8, 44) : Brand.hsl(0, 0, 62);
+  // AA contrast pass (app.css brief 10): the dark variant is the lighter
+  // of the two, which is the opposite of what it used to be here.
+  static Color get muted2 =>
+      dm ? Brand.hsl(220, 10, 62) : Brand.hsl(0, 0, 46);
   static Color get line => dm ? Brand.hsl(222, 14, 19) : Brand.hsl(0, 0, 92);
   static Color get line2 => dm ? Brand.hsl(222, 14, 14) : Brand.hsl(0, 0, 96);
   static Color get card => dm ? Brand.hsl(222, 20, 10) : Brand.hsl(0, 0, 100);
@@ -39,12 +42,37 @@ class Hip {
   static Color get successSoft =>
       dm ? Brand.hsl(152, 60, 45, .14) : Brand.hsl(152, 60, 38, .1);
   static Color get danger => dm ? Brand.hsl(4, 80, 64) : Brand.hsl(4, 72, 50);
+  static Color get warning =>
+      dm ? Brand.hsl(35, 90, 58) : Brand.hsl(35, 90, 44);
+
+  /// Dark-mode-only dot colour (map graticule, status card grid). In light
+  /// mode the hairline does the same job.
+  static Color get dmDot => dm ? Brand.hsl(222, 12, 24) : line;
   static const dark = Color(0xFF0B0E14); // onboarding / paywall backdrop
 
   /// Home hero panel: #0B0E14, slightly lifted off the dark-mode surface.
   static Color get hero => dm ? Brand.hsl(222, 24, 8) : dark;
 
+  /// System "reduce motion" switch. The shell reads
+  /// `MediaQuery.disableAnimationsOf(context)` into this before each frame,
+  /// the same way it resolves [dm]. Everything that animates in this file
+  /// takes its duration through [dur], and both ASCII engines read this flag
+  /// to draw one frozen frame instead of running a ticker.
+  static bool reducedMotion = false;
+
+  /// A duration that collapses to zero when the user asked for less motion.
+  static Duration dur(Duration d) => reducedMotion ? Duration.zero : d;
+
   static const double radius = 18;
+
+  /// The named type scale from app.css (lines 795 to 796). It maps onto
+  /// Dynamic Type on iOS and the Material scale on Android; anything not on
+  /// this list stays an ad hoc value at its call site.
+  static const double titleSize = 17;
+  static const double bodySize = 14;
+  static const double calloutSize = 13;
+  static const double captionSize = 13;
+  static const double legalSize = 12;
 
   /// Inter with a precise variable weight (the design uses 550/650/750).
   static TextStyle sans(double weight, double size,
@@ -210,7 +238,7 @@ class HipToggle extends StatelessWidget {
         onChanged(!on);
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: Hip.dur(const Duration(milliseconds: 200)),
         width: 46,
         height: 28,
         padding: const EdgeInsets.all(2.5),
@@ -221,7 +249,7 @@ class HipToggle extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
         ),
         child: AnimatedAlign(
-          duration: const Duration(milliseconds: 200),
+          duration: Hip.dur(const Duration(milliseconds: 200)),
           curve: Curves.easeOutCubic,
           alignment: on ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
@@ -321,8 +349,13 @@ class HipCard extends StatelessWidget {
   }
 }
 
-/// Primary CTA. `connect: true` gets the animated brand gradient + glow.
-class HipCta extends StatefulWidget {
+/// Primary CTA. `connect: true` is the flat brand blue with a lifted glow.
+///
+/// It used to be a gradient that slid forever behind the label. The 29.8
+/// revision retired that (app.css dropped `@keyframes cta-grad`): the primary
+/// button is flat blue, so nothing on the home screen holds a ticker open
+/// just to decorate itself.
+class HipCta extends StatelessWidget {
   final String label;
   final VoidCallback? onTap;
   final bool connect;
@@ -342,151 +375,87 @@ class HipCta extends StatefulWidget {
       this.leading});
 
   @override
-  State<HipCta> createState() => _HipCtaState();
-}
-
-class _HipCtaState extends State<HipCta> with SingleTickerProviderStateMixin {
-  // Created on first use so non-connect CTAs never carry a ticker. Must NOT
-  // be `late final`: dispose() would then be a first use, and constructing a
-  // controller during dispose looks up TickerMode on a deactivated element.
-  AnimationController? _gradCtrl;
-  AnimationController get _grad => _gradCtrl ??= AnimationController(
-      vsync: this, duration: const Duration(seconds: 6));
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.connect) _grad.repeat();
-  }
-
-  @override
-  void didUpdateWidget(covariant HipCta old) {
-    super.didUpdateWidget(old);
-    if (widget.connect && !_grad.isAnimating) _grad.repeat();
-    if (!widget.connect) _gradCtrl?.stop();
-  }
-
-  @override
-  void dispose() {
-    _gradCtrl?.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final disabled = widget.onTap == null;
-    final height = widget.quiet ? 44.0 : 54.0;
+    final disabled = onTap == null;
+    final height = quiet ? 44.0 : 54.0;
 
     Color fg;
-    if (widget.connect) {
+    if (connect) {
       fg = Colors.white;
-    } else if (widget.ghost) {
+    } else if (ghost) {
       // The danger tint reads on light and dark surfaces alike; the same red
       // the IP pill uses for EXPOSED, so "stop protecting" wears its color.
-      fg = widget.danger
-          ? (widget.darkGhost ? Brand.hsl(4, 85, 70) : Brand.hsl(4, 68, 50))
-          : (widget.darkGhost ? Colors.white : Hip.ink);
-    } else if (widget.quiet) {
-      fg = widget.darkGhost ? Colors.white.withValues(alpha: .55) : Hip.muted;
+      fg = danger
+          ? (darkGhost ? Brand.hsl(4, 85, 70) : Brand.hsl(4, 68, 50))
+          : (darkGhost ? Colors.white : Hip.ink);
+    } else if (quiet) {
+      fg = darkGhost ? Colors.white.withValues(alpha: .55) : Hip.muted;
     } else {
       fg = Colors.white;
     }
 
-    final label = Row(
+    final content = Row(
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (widget.leading != null) ...[
-          IconTheme(
-              data: IconThemeData(color: fg, size: 18), child: widget.leading!),
+        if (leading != null) ...[
+          IconTheme(data: IconThemeData(color: fg, size: 18), child: leading!),
           const SizedBox(width: 8),
         ],
-        Text(widget.label,
-            style: Hip.sans(widget.quiet ? 550 : 600, widget.quiet ? 15 : 16.5,
-                color: fg)),
+        Text(label,
+            style: Hip.sans(quiet ? 550 : 600, quiet ? 15 : 16.5, color: fg)),
       ],
     );
 
-    Widget button;
-    if (widget.connect) {
-      button = AnimatedBuilder(
-        animation: _grad,
-        builder: (context, child) {
-          // Sliding 115deg gradient. The colour pattern repeats every 3
-          // alignment units (stop period .4 of the 7.5-unit span), so a
-          // 3-unit shift per cycle loops seamlessly; anything else shows a
-          // visible restart.
-          final dx = _grad.value * 3;
-          return Container(
-            height: height,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                  color: Brand.hsl(220, 95, 72, .8), width: 1.5),
-              gradient: LinearGradient(
-                begin: Alignment(-1 - dx, -.35),
-                end: Alignment(6.5 - dx, .35),
-                colors: [
-                  Hip.blue,
-                  Brand.hsl(210, 95, 53),
-                  Brand.hsl(197, 85, 49),
-                  Hip.blue,
-                  Brand.hsl(210, 95, 53),
-                  Brand.hsl(197, 85, 49),
-                  Hip.blue,
-                ],
-                stops: const [0, .14, .25, .4, .54, .65, .8],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Brand.hsl(220, 95, 55, .55),
-                  blurRadius: 26,
-                  offset: const Offset(0, 10),
-                  spreadRadius: -12,
-                ),
-              ],
-            ),
-            child: child,
-          );
-        },
-        child: label,
-      );
-    } else {
-      Color bg;
-      BoxBorder? border;
-      if (widget.ghost) {
-        if (widget.danger) {
-          bg = Brand.hsl(4, 80, 60, widget.darkGhost ? .14 : .08);
-          border = Border.all(color: Brand.hsl(4, 80, 60, .35), width: 1.5);
-        } else {
-          bg = widget.darkGhost
-              ? Colors.white.withValues(alpha: .09)
-              : (Hip.dm ? Brand.hsl(222, 14, 16) : Hip.line2);
-        }
-      } else if (widget.quiet) {
-        bg = Colors.transparent;
-      } else {
-        bg = Hip.blue;
-      }
-      button = Container(
-        height: height,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: bg,
-          border: border,
-          borderRadius: BorderRadius.circular(16),
+    Color bg;
+    BoxBorder? border;
+    List<BoxShadow>? shadow;
+    if (connect) {
+      // app.css `.cta.connect`: flat --blue, a 1.5px lighter rim and one
+      // lifted shadow. No animation of any kind.
+      bg = Hip.blue;
+      border = Border.all(color: Brand.hsl(220, 95, 72, .8), width: 1.5);
+      shadow = [
+        BoxShadow(
+          color: Brand.hsl(220, 95, 55, .55),
+          blurRadius: 26,
+          offset: const Offset(0, 10),
+          spreadRadius: -12,
         ),
-        child: label,
-      );
+      ];
+    } else if (ghost) {
+      if (danger) {
+        bg = Brand.hsl(4, 80, 60, darkGhost ? .14 : .08);
+        border = Border.all(color: Brand.hsl(4, 80, 60, .35), width: 1.5);
+      } else {
+        bg = darkGhost
+            ? Colors.white.withValues(alpha: .09)
+            : (Hip.dm ? Brand.hsl(222, 14, 16) : Hip.line2);
+      }
+    } else if (quiet) {
+      bg = Colors.transparent;
+    } else {
+      bg = Hip.blue;
     }
+
+    final button = Container(
+      height: height,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: bg,
+        border: border,
+        boxShadow: shadow,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: content,
+    );
 
     return GestureDetector(
       onTap: disabled
           ? null
           : () {
               Haptics.tap();
-              widget.onTap!();
+              onTap!();
             },
       child: Opacity(opacity: disabled ? .55 : 1, child: button),
     );
@@ -502,13 +471,25 @@ class HipIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
+    // app.css `.iconbtn` is a 38px square with a 12px corner. The touch
+    // target around it is 48x48 (the CSS widens it with an ::after pad, we
+    // widen it with the box), which is over both platform minimums.
+    return Semantics(
+      button: true,
       child: SizedBox(
-        width: 38,
-        height: 38,
-        child: Icon(icon, size: 22, color: color ?? Hip.inkSoft),
+        width: 48,
+        height: 48,
+        child: Center(
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              width: 38,
+              height: 38,
+              child: Icon(icon, size: 22, color: color ?? Hip.inkSoft),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -588,7 +569,8 @@ class HipSectionLabel extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 18, 14, 7),
       child: Text(text.toUpperCase(),
-          style: Hip.sans(650, 12, color: Hip.muted2, letterSpacing: .84)),
+          style: Hip.sans(650, Hip.captionSize,
+              color: Hip.muted2, letterSpacing: .91)),
     );
   }
 }
@@ -610,7 +592,11 @@ class HipListGroup extends StatelessWidget {
       child: Column(children: [
         for (var i = 0; i < children.length; i++) ...[
           if (i > 0) Container(height: 1, color: Hip.line2),
-          children[i],
+          HipRowSlot(
+            first: i == 0,
+            last: i == children.length - 1,
+            child: children[i],
+          ),
         ],
       ]),
     );
@@ -644,6 +630,7 @@ class HipListRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final green = Brand.hsl(152, 60, 42);
+    final corners = HipRowSlot.cornersOf(context);
     final row = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: selected
@@ -651,7 +638,7 @@ class HipListRow extends StatelessWidget {
               color: Hip.dm
                   ? Brand.hsl(220, 60, 55, .12)
                   : Brand.hsl(220, 95, 55, .07),
-              borderRadius: BorderRadius.circular(Hip.radius - 4),
+              borderRadius: corners,
             )
           : null,
       child: Row(children: [
@@ -662,8 +649,8 @@ class HipListRow extends StatelessWidget {
               Flexible(
                 child: Text(title,
                     overflow: TextOverflow.ellipsis,
-                    style: Hip.sans(650, 15.5,
-                        color: Hip.ink, letterSpacing: -.15)),
+                    style: Hip.sans(650, Hip.titleSize,
+                        color: Hip.ink, letterSpacing: -.17)),
               ),
               if (live) ...[
                 const SizedBox(width: 7),
@@ -691,8 +678,8 @@ class HipListRow extends StatelessWidget {
                 child: Text(subtitle!,
                     overflow: TextOverflow.ellipsis,
                     style: subtitleMono
-                        ? Hip.mono(600, 11, color: Hip.muted)
-                        : Hip.sans(400, 12.5, color: Hip.muted)),
+                        ? Hip.mono(600, 12, color: Hip.muted)
+                        : Hip.sans(400, Hip.bodySize, color: Hip.muted)),
               ),
           ]),
         ),
@@ -702,10 +689,43 @@ class HipListRow extends StatelessWidget {
     if (onTap == null) return row;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(15),
+      borderRadius: corners,
       child: row,
     );
   }
+}
+
+/// Where a row sits inside its [HipListGroup], so it can round only the
+/// corners that touch the group's outer edge. app.css: first 15/15/8/8, last
+/// 8/8/15/15, a lone row 15 all round, everything between 8.
+class HipRowSlot extends InheritedWidget {
+  final bool first;
+  final bool last;
+  const HipRowSlot({
+    super.key,
+    required this.first,
+    required this.last,
+    required super.child,
+  });
+
+  static const double _outer = 15;
+  static const double _inner = 8;
+
+  /// The corner radii for the row built under [context]. A row with no group
+  /// above it (a card, a search result) is treated as a lone row.
+  static BorderRadius cornersOf(BuildContext context) {
+    final slot = context.dependOnInheritedWidgetOfExactType<HipRowSlot>();
+    final first = slot?.first ?? true;
+    final last = slot?.last ?? true;
+    return BorderRadius.vertical(
+      top: Radius.circular(first ? _outer : _inner),
+      bottom: Radius.circular(last ? _outer : _inner),
+    );
+  }
+
+  @override
+  bool updateShouldNotify(HipRowSlot old) =>
+      old.first != first || old.last != last;
 }
 
 /// Centered footnote under lists/CTAs.
@@ -720,7 +740,7 @@ class HipSubnote extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(24, 10, 24, 0),
       child: Text(text,
           textAlign: TextAlign.center,
-          style: Hip.sans(400, 12,
+          style: Hip.sans(400, Hip.captionSize,
               color: onDark ? Colors.white.withValues(alpha: .4) : Hip.muted2,
               height: 1.5)),
     );

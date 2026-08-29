@@ -10,6 +10,30 @@ class VpnController {
     return ok ?? false;
   }
 
+  /// Whether the OS already holds a VPN configuration for this app, i.e.
+  /// whether [prepare] would return immediately instead of putting the system
+  /// consent dialog up.
+  ///
+  /// This is what lets the app tell "never asked" apart from "asked and
+  /// refused", which is the difference between showing a one-off explanation
+  /// and showing a declined state. It asks and never grants: on Android it is
+  /// `VpnService.prepare(context) == null`, which reads the existing consent
+  /// without raising anything.
+  ///
+  /// False is the safe answer everywhere it cannot be determined (an iOS build
+  /// before the PacketTunnel port, a platform with no native side): the
+  /// explanation is then shown once, and the persisted record stops it from
+  /// ever appearing again.
+  static Future<bool> isPrepared() async {
+    try {
+      return await _channel.invokeMethod<bool>('isPrepared') ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
   /// Starts the sing-box tunnel with the given config JSON. [label] is shown in
   /// the foreground notification (the server name).
   static Future<bool> start(String configJson, {String? label}) async {
