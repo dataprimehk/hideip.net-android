@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 
+import '../core/app_telemetry.dart';
 import '../core/async_gate.dart';
 import '../core/device_link.dart';
 import '../core/haptics.dart';
@@ -182,6 +183,7 @@ class AppState extends ChangeNotifier {
   /// Load persisted state + initial IP. Call once at startup.
   Future<void> init() async {
     _prefs = await UiPrefs.load();
+    _count(AppEvent.firstOpen);
     // Keep the native side's copy of the Always-on opt-in current (the service
     // reads it on system-initiated starts, when no Dart is running).
     VpnController.setAlwaysOn(_prefs.alwaysOn);
@@ -616,6 +618,7 @@ class AppState extends ChangeNotifier {
     bool select = false,
   }) async {
     if (newProfiles.isEmpty) return;
+    _count(AppEvent.firstProfile);
     final sel = selected;
     // Re-importing a subscription the list already holds must replace its
     // group, not stack a second copy of every server next to the first.
@@ -725,6 +728,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// One-shot anonymous counter (docs/app-events-api.md). Never awaited: the
+  /// app must behave identically whether the request succeeds, fails or is
+  /// switched off.
+  void _count(AppEvent event) {
+    unawaited(AppTelemetry.mark(event, enabled: _prefs.usageCounts));
+  }
+
   // --- Connection ------------------------------------------------------------
 
   Future<void> connect() async {
@@ -781,6 +791,7 @@ class AppState extends ChangeNotifier {
       _conn = ConnState.connected;
       Haptics.success();
       notifyListeners();
+      _count(AppEvent.firstConnect);
       _refreshIpAfterToggle();
       // With WireGuard up, watch for the handshake actually completing and
       // fall back to stealth without user involvement if it never does.

@@ -12,6 +12,7 @@ class UiPrefs {
   static const _kAlwaysOn = 'ui_alwayson_v1';
   static const _kKillSwitch = 'ui_killswitch_v1';
   static const _kSpeedMode = 'ui_speedmode_v1';
+  static const _kUsageCounts = 'ui_usagecounts_v1';
 
   final bool advanced;
   final bool onboarded;
@@ -32,6 +33,11 @@ class UiPrefs {
   // is built on and WireGuard is the optional upgrade on top of it.
   final bool speedMode;
 
+  // Anonymous usage counts: three one-shot events with no identifier (see
+  // docs/app-events-api.md). On by default because nothing about the user is
+  // in them; the switch exists so that stays the user's call, not ours.
+  final bool usageCounts;
+
   const UiPrefs({
     this.advanced = false,
     this.onboarded = false,
@@ -42,6 +48,7 @@ class UiPrefs {
     this.alwaysOn = false,
     this.killSwitch = false,
     this.speedMode = false,
+    this.usageCounts = true,
   });
 
   UiPrefs copyWith({
@@ -54,6 +61,7 @@ class UiPrefs {
     bool? alwaysOn,
     bool? killSwitch,
     bool? speedMode,
+    bool? usageCounts,
   }) =>
       UiPrefs(
         advanced: advanced ?? this.advanced,
@@ -65,6 +73,7 @@ class UiPrefs {
         alwaysOn: alwaysOn ?? this.alwaysOn,
         killSwitch: killSwitch ?? this.killSwitch,
         speedMode: speedMode ?? this.speedMode,
+        usageCounts: usageCounts ?? this.usageCounts,
       );
 
   static Future<UiPrefs> load() async {
@@ -79,6 +88,7 @@ class UiPrefs {
       alwaysOn: p.getBool(_kAlwaysOn) ?? false,
       killSwitch: p.getBool(_kKillSwitch) ?? false,
       speedMode: p.getBool(_kSpeedMode) ?? false,
+      usageCounts: p.getBool(_kUsageCounts) ?? true,
     );
   }
 
@@ -93,5 +103,6 @@ class UiPrefs {
     await p.setBool(_kAlwaysOn, alwaysOn);
     await p.setBool(_kKillSwitch, killSwitch);
     await p.setBool(_kSpeedMode, speedMode);
+    await p.setBool(_kUsageCounts, usageCounts);
   }
 }

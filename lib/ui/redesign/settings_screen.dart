@@ -163,6 +163,20 @@ class SettingsScreen extends StatelessWidget {
                 if (defaultTargetPlatform == TargetPlatform.android)
                   _AndroidAlwaysOnRows(state: state),
               ]),
+              const HipSectionLabel('Privacy'),
+              HipListGroup(children: [
+                HipListRow(
+                  leading: grayTile(Icons.bar_chart_outlined),
+                  title: 'Anonymous usage counts',
+                  subtitle: 'Three one-time events, no identifiers. '
+                      'Details at hideip.net/privacy',
+                  trailing: HipToggle(
+                    on: prefs.usageCounts,
+                    onChanged: (v) =>
+                        state.updatePrefs(prefs.copyWith(usageCounts: v)),
+                  ),
+                ),
+              ]),
               const HipSectionLabel('Connections'),
               HipListGroup(children: [
                 HipListRow(
