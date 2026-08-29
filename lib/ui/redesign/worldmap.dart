@@ -8,9 +8,13 @@ import 'package:flutter/services.dart' show rootBundle;
 import '../../core/haptics.dart';
 import '../../core/ip_lookup.dart';
 import '../../core/location.dart';
+import '../../core/notifications.dart';
+import '../../core/ui_prefs.dart';
 import '../../core/votes.dart';
 import '../brand.dart';
+import '../strings.dart';
 import 'hip.dart';
+import 'hip_sheet.dart';
 import 'mark.dart' show MarkState;
 
 /// Precision world map, ported from the design prototype's mapview.jsx.
@@ -32,6 +36,16 @@ class WorldMap extends StatefulWidget {
   final VoidCallback onConnect;
   final VoidCallback onAllLocations;
 
+  /// Reads the notification permission. The map needs it in two places: the
+  /// thanks line after a vote, and whether the pre-prompt is due at all.
+  /// Left out, it reads the system answer itself, which is correct but does
+  /// not tell the state layer that anything happened.
+  final Future<NotifPerm> Function()? notifPermission;
+
+  /// Puts the system notification dialog up and records that it was offered.
+  /// Same reasoning as [notifPermission] for the default.
+  final Future<NotifPerm> Function()? requestNotifPermission;
+
   const WorldMap({
     super.key,
     required this.locations,
@@ -44,6 +58,8 @@ class WorldMap extends StatefulWidget {
     required this.onPick,
     required this.onConnect,
     required this.onAllLocations,
+    this.notifPermission,
+    this.requestNotifPermission,
   });
 
   @override
@@ -89,6 +105,39 @@ const _ccIso = {
   'SG': '702', 'SI': '705', 'SK': '703', 'TH': '764', 'TR': '792',
   'TW': '158', 'UA': '804', 'US': '840', 'VN': '704', 'ZA': '710',
 };
+
+/// Countries that already carry a hideip.net exit node, as the ISO 3166
+/// numeric ids the geometry is keyed by.
+///
+/// Only managed locations count. A vote is a request for an official
+/// location, so a server the user imported themselves says nothing about
+/// whether the country still needs one, and must not take the Vote button
+/// away from everyone in it.
+Set<String> managedCountryIds(Iterable<Location> locations) => {
+      for (final l in locations)
+        if (l.premium && _ccIso[l.cc] != null) _ccIso[l.cc]!,
+    };
+
+/// One-shot gate for the notification pre-prompt (C4).
+///
+/// The explanation is offered after the first vote of a cycle and never at
+/// launch, only while the system has never been asked, and only once.
+class VotePrimerGate {
+  bool _shown = false;
+
+  bool due({required bool firstOfCycle, required NotifPerm perm}) {
+    if (_shown || !firstOfCycle || perm != NotifPerm.ask) return false;
+    _shown = true;
+    return true;
+  }
+
+  @visibleForTesting
+  void resetForTesting() => _shown = false;
+}
+
+/// Shared because the map is rebuilt on every visit to Home and the offer is
+/// once per install session, not once per mount.
+final votePrimer = VotePrimerGate();
 
 class _Country {
   final String id; // ISO 3166-1 numeric, as used by world-atlas
@@ -187,6 +236,16 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
   _Country? _voteSel;
   final VoteService _votes = VoteService.instance;
 
+  // Notification permission, read only when it matters: once a vote panel is
+  // on screen (it decides the thanks line) or a vote has just been cast (it
+  // decides whether the pre-prompt is due). Never at launch.
+  NotifPerm? _notifPerm;
+  bool _notifPermLoading = false;
+
+  // A winning location keeps its trophy until the user has connected to it
+  // once; connecting is what turns the reward back into an ordinary server.
+  final Set<int> _claimedWins = {};
+
   // Invite pulse: once per ambient cycle one visible country without a node
   // glows briefly, so the map itself says plain land is tappable (voting).
   String? _pulseId;
@@ -220,7 +279,7 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
     final v = _current;
     final hw = _box.width / (2 * v.z), hh = _box.height / (2 * v.z);
     final vis = Rect.fromLTRB(v.cx - hw, v.cy - hh, v.cx + hw, v.cy + hh);
-    final has = _hasNodeIds;
+    final has = _managedIds;
     // Only countries the user can actually see and notice (roughly 30x30
     // screen px and up) are worth pulsing.
     final candidates = <_Country>[
@@ -255,6 +314,12 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
   void didUpdateWidget(covariant WorldMap old) {
     super.didUpdateWidget(old);
     if (!widget.open && old.open) _entered = false;
+    // Connecting to a winner is what retires its trophy.
+    if (widget.conn == MarkState.connected &&
+        old.conn != MarkState.connected &&
+        widget.active != null) {
+      _claimedWins.add(widget.active!.index);
+    }
     // A state change re-frames the camera; drop the vote card rather than
     // have it ride over the transition. Voting itself works in any state.
     if (widget.conn != old.conn) _voteSel = null;
@@ -320,10 +385,20 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
           if (l.lat != null) (l, _project(l.lat!, l.lon!)),
       ];
 
-  Set<String> get _hasNodeIds => {
-        for (final l in widget.locations)
-          if (_ccIso[l.cc] != null) _ccIso[l.cc]!,
-      };
+  Set<String> get _managedIds => managedCountryIds(widget.locations);
+
+  /// Pin indexes that currently carry the trophy: the vote service names the
+  /// countries whose vote won, and [Location.won] carries the same fact once
+  /// the state layer knows it.
+  Set<int> get _wonIndexes {
+    final won = _votes.won;
+    return {
+      for (final l in widget.locations)
+        if (!_claimedWins.contains(l.index) &&
+            (l.won || won.contains(_ccIso[l.cc] ?? '')))
+          l.index,
+    };
+  }
 
   _View get _current {
     if (_cam.isAnimating && _from != null && _to != null) {
@@ -424,55 +499,135 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
       }
     }
     final pick =
-        (hit == null || hit.name.isEmpty || _hasNodeIds.contains(hit.id))
+        (hit == null || hit.name.isEmpty || _managedIds.contains(hit.id))
             ? null
             : hit;
-    if (pick != null) Haptics.selection();
+    if (pick != null) {
+      Haptics.selection();
+      _loadNotifPerm();
+    }
     setState(() => _voteSel = pick);
+  }
+
+  // --- voting ------------------------------------------------------------
+
+  Future<NotifPerm> _readNotifPerm() async {
+    final read = widget.notifPermission;
+    if (read != null) return read();
+    final prefs = await UiPrefs.load();
+    return Notifications.permission(asked: prefs.notifAsked);
+  }
+
+  Future<NotifPerm> _askNotifPerm() async {
+    final ask = widget.requestNotifPermission;
+    if (ask != null) return ask();
+    final perm = await Notifications.request();
+    final prefs = await UiPrefs.load();
+    await prefs.copyWith(notifAsked: true).save();
+    return perm;
+  }
+
+  void _loadNotifPerm() {
+    if (_notifPerm != null || _notifPermLoading) return;
+    _notifPermLoading = true;
+    _readNotifPerm().then((perm) {
+      _notifPermLoading = false;
+      if (mounted) setState(() => _notifPerm = perm);
+    });
+  }
+
+  /// Nothing has been spent in the current cycle, so the next vote is its
+  /// first. With no quota stated, "first" falls back to "no vote on file".
+  bool get _cycleUntouched {
+    final max = _votes.votesMax, left = _votes.votesLeft;
+    if (max != null && left != null) return left == max;
+    return _votes.mine.isEmpty;
+  }
+
+  Future<void> _castVote(String countryId) async {
+    if (_votes.hasVoted(countryId) || !_votes.canVote) return;
+    final firstOfCycle = _cycleUntouched;
+    Haptics.success();
+    await _votes.toggle(countryId);
+    final perm = await _readNotifPerm();
+    if (!mounted) return;
+    setState(() => _notifPerm = perm);
+    if (!votePrimer.due(firstOfCycle: firstOfCycle, perm: perm)) return;
+    // The sheet follows the vote rather than interrupting it: the panel gets
+    // to show its thanks line first.
+    await Future<void>.delayed(Hip.dur(const Duration(milliseconds: 450)));
+    if (!mounted) return;
+    final go = await showHipSheet<bool>(context, children: _notifPrimer());
+    if (go != true || !mounted) return;
+    final answer = await _askNotifPerm();
+    if (mounted) setState(() => _notifPerm = answer);
+  }
+
+  List<Widget> _notifPrimer() => [
+        const HipSheetTitle(S.c4Title),
+        const HipSheetBody(S.c4Body),
+        HipSheetActions(children: [
+          HipCta(S.aContinue,
+              connect: true, onTap: () => Navigator.of(context).pop(true)),
+          HipCta(S.aNotNow,
+              quiet: true, onTap: () => Navigator.of(context).pop(false)),
+        ]),
+      ];
+
+  Future<void> _removeVote(String countryId) async {
+    Haptics.selection();
+    await _votes.unvote(countryId);
   }
 
   // --- copy --------------------------------------------------------------
 
-  String _fmtGeo(double lat, double lon) =>
-      '${lat.abs().toStringAsFixed(2)}°${lat >= 0 ? 'N' : 'S'} '
-      '${lon.abs().toStringAsFixed(2)}°${lon >= 0 ? 'E' : 'W'}';
+  String _fmtGeo(double lat, double lon) => S.cMapCoords(
+        lat.abs().toStringAsFixed(2),
+        lat >= 0 ? 'N' : 'S',
+        lon.abs().toStringAsFixed(2),
+        lon >= 0 ? 'E' : 'W',
+      );
 
   (String, Color) _hud() {
     final a = widget.active;
-    final ping = widget.activePingMs != null ? '${widget.activePingMs} MS' : '…';
+    final ms = widget.activePingMs;
+    final ping = ms != null ? S.cMapMs(ms) : S.cMapMsUnknown;
     switch (widget.conn) {
       case MarkState.connected when a != null:
         return (
           widget.advanced
-              ? 'EXIT ${a.host} · $ping'
-              : 'EXIT ${a.city.toUpperCase()}'
-                  '${a.lat != null ? ' · ${_fmtGeo(a.lat!, a.lon!)}' : ''} · $ping',
+              ? S.cMapHudExitHost(a.host, ping)
+              : S.cMapHudExit(a.city.toUpperCase(),
+                  a.lat != null ? _fmtGeo(a.lat!, a.lon!) : null, ping),
           Brand.hsl(152, 60, 50)
         );
       case MarkState.connecting when a != null:
-        return ('LINK → ${a.city.toUpperCase()} · HANDSHAKE…', Brand.hsl(220, 95, 62));
+        return (
+          S.cMapHudLink(a.city.toUpperCase()),
+          Brand.hsl(220, 95, 62)
+        );
       case MarkState.disconnecting:
-        return ('CLOSING TUNNEL…', Brand.hsl(220, 95, 62));
+        return (S.cMapHudClosing, Brand.hsl(220, 95, 62));
       default:
         final g = widget.userGeo;
         return (
           g != null
-              ? 'YOU · ${g.city.toUpperCase()} · ${_fmtGeo(g.lat, g.lon)}'
-              : 'YOU · LOCATION UNKNOWN',
+              ? S.cMapHudYou(g.city.toUpperCase(), _fmtGeo(g.lat, g.lon))
+              : S.cMapHudYouUnknown,
           Brand.hsl(4, 75, 58)
         );
     }
   }
 
   String get _tagCity => switch (widget.conn) {
-        MarkState.connecting => 'Connecting…',
-        MarkState.disconnecting => 'Disconnecting…',
+        MarkState.connecting => S.tConnecting,
+        MarkState.disconnecting => S.tDisconnecting,
         _ => widget.active?.city ?? '',
       };
 
   String get _tagAction =>
       widget.conn == MarkState.disconnected && widget.active != null
-          ? ' · Connect'
+          ? S.cMapTagAction
           : '';
 
   double _tagWidth() {
@@ -539,7 +694,8 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
                   conn: widget.conn,
                   tagCity: _tagCity,
                   tagAction: _tagAction,
-                  hasNodeIds: _hasNodeIds,
+                  managedIds: _managedIds,
+                  wonIndexes: _wonIndexes,
                   selectedId: _voteSel?.id,
                   pulseId: _voteSel == null ? _pulseId : null,
                   t: _tick.value,
@@ -579,44 +735,73 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
         ),
         if (_geo == null)
           Center(
-            child: Text('LOADING MAP…',
+            child: Text(S.cMapLoading,
                 style: Hip.sans(600, 10.5,
                     color: Colors.white.withValues(alpha: .35),
                     letterSpacing: .84)),
           ),
-        if (_geo != null &&
-            widget.open &&
-            _voteSel == null &&
-            !_votes.hintDismissed)
-          const Positioned(top: 10, left: 12, child: _VoteHint()),
+        if (_geo != null && widget.open && _voteSel == null)
+          Positioned(
+            top: 10,
+            left: 12,
+            right: 62,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: VoteHint(
+                invite: !_votes.hintDismissed,
+                votesLeft: _votes.votesLeft,
+                votesMax: _votes.votesMax,
+              ),
+            ),
+          ),
         if (_voteSel != null)
           Positioned(
             left: 12,
             right: 12,
             bottom: 60,
-            child: _VoteCard(
+            child: VotePanel(
               key: ValueKey(_voteSel!.id),
-              countryId: _voteSel!.id,
               countryName: _voteSel!.name,
-              votes: _votes,
+              count: _votes.displayCount(_voteSel!.id),
+              voted: _votes.hasVoted(_voteSel!.id),
+              votesLeft: _votes.votesLeft,
+              votesMax: _votes.votesMax,
+              resetDate: _votes.votesReset,
+              notifPerm: _notifPerm,
+              onVote: () => _castVote(_voteSel!.id),
+              onUnvote: () => _removeVote(_voteSel!.id),
               onClose: () => setState(() => _voteSel = null),
             ),
           ),
         Positioned(
-          top: 10,
-          right: 12,
-          child: GestureDetector(
-            onTap: () => _animateTo(_camFor()),
-            child: Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: Brand.hsl(222, 20, 9, .8),
-                border: Border.all(color: Colors.white.withValues(alpha: .12)),
-                borderRadius: BorderRadius.circular(10),
+          // The 32px control keeps its place; the box around it is the 44
+          // the platforms ask for, so the inset is 6 rather than 12.
+          top: 4,
+          right: 6,
+          child: Semantics(
+            button: true,
+            label: S.cMapRecenter,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _animateTo(_camFor()),
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: Center(
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Brand.hsl(222, 20, 9, .8),
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: .12)),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.explore_outlined,
+                        size: 16, color: Colors.white.withValues(alpha: .75)),
+                  ),
+                ),
               ),
-              child: Icon(Icons.explore_outlined,
-                  size: 16, color: Colors.white.withValues(alpha: .75)),
             ),
           ),
         ),
@@ -676,7 +861,7 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
                     borderRadius: BorderRadius.circular(9),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text('All locations',
+                    Text(S.cMapAll,
                         style: Hip.sans(600, 11.5,
                             color: Colors.white.withValues(alpha: .88))),
                     const SizedBox(width: 3),
@@ -703,7 +888,8 @@ class _MapPainter extends CustomPainter {
   final MarkState conn;
   final String tagCity;
   final String tagAction;
-  final Set<String> hasNodeIds;
+  final Set<String> managedIds; // countries that already have a node
+  final Set<int> wonIndexes; // pins whose country won a voting round
   final String? selectedId; // country picked for voting
   final String? pulseId; // country glowing this ambient cycle (invite pulse)
   final double t; // 0..1 ambient loop (4s)
@@ -720,7 +906,8 @@ class _MapPainter extends CustomPainter {
     required this.conn,
     required this.tagCity,
     required this.tagAction,
-    required this.hasNodeIds,
+    required this.managedIds,
+    required this.wonIndexes,
     required this.selectedId,
     required this.pulseId,
     required this.t,
@@ -733,6 +920,9 @@ class _MapPainter extends CustomPainter {
   // green band sitting on a black rectangle.
   static final _bgBase = Brand.hsl(222, 32, 4.5);
   static const _bgOn = Color(0xFF071510);
+
+  /// The trophy colour, and the core of the pin wearing it.
+  static final _gold = Brand.hsl(42, 92, 62);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -771,7 +961,7 @@ class _MapPainter extends CustomPainter {
         ..color = Brand.hsl(220, 90, 62, .8);
       for (final c in g.countries) {
         final sel = c.id == selectedId;
-        final has = hasNodeIds.contains(c.id);
+        final has = managedIds.contains(c.id);
         canvas.drawPath(
             c.path, sel ? landSelFill : (has ? landHasFill : landFill));
         canvas.drawPath(
@@ -889,7 +1079,7 @@ class _MapPainter extends CustomPainter {
           ..strokeWidth = 2.4 * iz
           ..color = Brand.hsl(220, 95, 58),
       );
-      _label(canvas, '${userCity ?? 'you'} · you', up!, 19 * iz, iz);
+      _label(canvas, S.cMapYou(userCity ?? S.cMapYouAnon), up!, 19 * iz, iz);
     }
 
     for (final (l, p) in nodes) {
@@ -916,11 +1106,15 @@ class _MapPainter extends CustomPainter {
             ..color = acc.withValues(alpha: blip(2.6)),
         );
       }
+      final won = wonIndexes.contains(l.index);
       canvas.drawCircle(
           p,
           2.6 * iz,
           Paint()
-            ..color = on ? acc : Colors.white.withValues(alpha: .65));
+            ..color = won
+                ? _gold
+                : (on ? acc : Colors.white.withValues(alpha: .65)));
+      if (won) _cup(canvas, p, iz);
       if (!on && z > 11) _label(canvas, l.city, p, 19 * iz, iz);
     }
 
@@ -955,6 +1149,31 @@ class _MapPainter extends CustomPainter {
       canvas.restore();
     }
 
+    canvas.restore();
+  }
+
+  /// The trophy a winning location wears until the user connects to it once
+  /// (app.css `.pin.won .cup`, geometry straight from `mapview.jsx`).
+  void _cup(Canvas canvas, Offset at, double iz) {
+    canvas.save();
+    canvas.translate(at.dx, at.dy);
+    canvas.scale(iz); // the strokes are screen px, like the SVG's
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = _gold;
+    final bowl = Path()
+      ..moveTo(-3, -16)
+      ..lineTo(3, -16)
+      ..lineTo(3, -13.8)
+      ..arcToPoint(const Offset(-3, -13.8),
+          radius: const Radius.circular(3), clockwise: true)
+      ..close();
+    canvas.drawPath(bowl, stroke);
+    canvas.drawLine(const Offset(0, -11.6), const Offset(0, -9.8), stroke);
+    canvas.drawLine(const Offset(-2.2, -9.8), const Offset(2.2, -9.8), stroke);
     canvas.restore();
   }
 
@@ -1008,20 +1227,39 @@ class _MapPainter extends CustomPainter {
   bool shouldRepaint(covariant _MapPainter old) => true;
 }
 
-/// "Tap a country to vote" pill, shown until the first vote is cast.
-class _VoteHint extends StatelessWidget {
-  const _VoteHint();
+/// The map's standing line about voting (C1).
+///
+/// Before the first vote it invites and carries the allowance behind a
+/// hairline. After it the invitation has been read, so only the allowance
+/// stays. With no quota stated by the backend there is nothing to say, and
+/// the pill goes with the invitation rather than promising a number.
+class VoteHint extends StatelessWidget {
+  final bool invite;
+  final int? votesLeft;
+  final int? votesMax;
+
+  const VoteHint({
+    super.key,
+    required this.invite,
+    this.votesLeft,
+    this.votesMax,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final left = votesLeft, max = votesMax;
+    final quota = left != null && max != null;
+    if (!invite && !quota) return const SizedBox.shrink();
+    final ink = Colors.white.withValues(alpha: .72);
     return IgnorePointer(
       child: TweenAnimationBuilder<double>(
         tween: Tween(begin: 0, end: 1),
-        duration: const Duration(milliseconds: 1150),
+        duration: Hip.dur(Duration(milliseconds: invite ? 1150 : 800)),
         curve: const Interval(.48, 1, curve: Cubic(.22, .61, .36, 1)),
         builder: (context, v, child) => Opacity(
           opacity: v,
-          child: Transform.translate(offset: Offset(0, -6 * (1 - v)), child: child),
+          child:
+              Transform.translate(offset: Offset(0, -6 * (1 - v)), child: child),
         ),
         child: Container(
           padding: const EdgeInsets.fromLTRB(10, 7, 12, 7),
@@ -1033,9 +1271,27 @@ class _VoteHint extends StatelessWidget {
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.public, size: 13, color: Brand.hsl(220, 95, 68)),
             const SizedBox(width: 7),
-            Text('Tap a country to vote for the next location',
-                style: Hip.sans(600, 11,
-                    color: Colors.white.withValues(alpha: .72))),
+            Flexible(
+              child: Text(
+                invite ? S.c1Hint : S.c1VotesLeft(left!, max!),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: invite
+                    ? Hip.sans(600, 11, color: ink)
+                    : Hip.mono(600, 11, color: ink),
+              ),
+            ),
+            if (invite && quota) ...[
+              Container(
+                width: 1,
+                height: 12,
+                margin: const EdgeInsets.symmetric(horizontal: 9),
+                color: Colors.white.withValues(alpha: .18),
+              ),
+              Text(S.c1HintLeft(left, max),
+                  style: Hip.mono(600, 11,
+                      color: Colors.white.withValues(alpha: .5))),
+            ],
           ]),
         ),
       ),
@@ -1043,29 +1299,73 @@ class _VoteHint extends StatelessWidget {
   }
 }
 
-/// The vote card for a country without a node: count plus a toggle button.
-/// The count renders only when the server total is known; a local vote is
-/// stored and queued regardless (see VoteService).
-class _VoteCard extends StatelessWidget {
-  final String countryId;
+/// The vote panel for a country with no hideip.net node (C2 and C3).
+///
+/// Pure: everything it renders is a parameter, so the panel can be laid out
+/// and driven without a map, a network or a service behind it.
+///
+/// [count] is null while the server total is unknown, and then the line is
+/// omitted rather than filled with a guess. Same for [votesLeft]: a limit
+/// nobody stated is not shown and not enforced.
+class VotePanel extends StatelessWidget {
   final String countryName;
-  final VoteService votes;
+  final int? count;
+  final bool voted;
+  final int? votesLeft;
+  final int? votesMax;
+  final String? resetDate;
+
+  /// Null until the permission has been read; the neutral thanks line covers
+  /// that moment, because it is true whatever the answer turns out to be.
+  final NotifPerm? notifPerm;
+
+  final VoidCallback onVote;
+  final VoidCallback onUnvote;
   final VoidCallback onClose;
-  const _VoteCard({
+
+  const VotePanel({
     super.key,
-    required this.countryId,
     required this.countryName,
-    required this.votes,
+    required this.count,
+    required this.voted,
+    required this.votesLeft,
+    required this.votesMax,
+    required this.resetDate,
+    required this.notifPerm,
+    required this.onVote,
+    required this.onUnvote,
     required this.onClose,
   });
 
+  /// Splits [text] around [number] so the figure can be set in mono without
+  /// the sentence being assembled from fragments a translation cannot move.
+  static List<InlineSpan> _figure(
+      String text, String number, TextStyle base, TextStyle mono) {
+    final at = text.indexOf(number);
+    if (at < 0) return [TextSpan(text: text, style: base)];
+    return [
+      if (at > 0) TextSpan(text: text.substring(0, at), style: base),
+      TextSpan(text: number, style: mono),
+      if (at + number.length < text.length)
+        TextSpan(text: text.substring(at + number.length), style: base),
+    ];
+  }
+
+  String get _thanks => switch (notifPerm) {
+        NotifPerm.granted => S.c3ThanksSoon(countryName),
+        NotifPerm.denied => S.c3ThanksOff,
+        _ => S.c3Thanks,
+      };
+
   @override
   Widget build(BuildContext context) {
-    final voted = votes.hasVoted(countryId);
-    final count = votes.displayCount(countryId);
+    final left = votesLeft, max = votesMax;
+    final spent = left != null && left == 0;
+    final n = count;
+
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 450),
+      duration: Hip.dur(const Duration(milliseconds: 450)),
       curve: const Cubic(.26, .9, .32, 1.18),
       builder: (context, v, child) => Opacity(
         opacity: v.clamp(0.0, 1.0),
@@ -1075,7 +1375,7 @@ class _VoteCard extends StatelessWidget {
         ),
       ),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
+        padding: const EdgeInsets.fromLTRB(14, 13, 5, 12),
         decoration: BoxDecoration(
           color: Brand.hsl(222, 20, 8, .92),
           border: Border.all(color: Colors.white.withValues(alpha: .12)),
@@ -1087,77 +1387,171 @@ class _VoteCard extends StatelessWidget {
               child: Text(countryName,
                   style: Hip.sans(650, 14, color: Colors.white)),
             ),
-            GestureDetector(
-              onTap: onClose,
-              child: Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: Colors.white.withValues(alpha: .06),
+            Semantics(
+              button: true,
+              label: S.aClose,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onClose,
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: Colors.white.withValues(alpha: .06),
+                      ),
+                      child: Icon(Icons.close,
+                          size: 14,
+                          color: Colors.white.withValues(alpha: .45)),
+                    ),
+                  ),
                 ),
-                child: Icon(Icons.close,
-                    size: 14, color: Colors.white.withValues(alpha: .45)),
               ),
             ),
           ]),
-          const SizedBox(height: 3),
-          Text(
-              'No exit node here yet. Vote to tell us where to build next. '
-              'Votes are anonymous, no account needed.',
-              style: Hip.sans(450, 12,
-                  color: Colors.white.withValues(alpha: .55), height: 1.45)),
-          const SizedBox(height: 11),
-          Row(children: [
-            if (count != null)
-              Text.rich(
-                TextSpan(children: [
-                  TextSpan(
-                      text: '$count',
-                      style: Hip.mono(700, 12.5, color: Colors.white)),
-                  TextSpan(
-                      text: ' votes',
-                      style: Hip.sans(500, 12.5,
-                          color: Colors.white.withValues(alpha: .65))),
-                ]),
-              ),
-            const Spacer(),
-            GestureDetector(
-              onTap: () {
-                if (voted) {
-                  Haptics.selection();
-                } else {
-                  Haptics.success();
-                }
-                votes.toggle(countryId);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-                decoration: BoxDecoration(
-                  color: voted
-                      ? Brand.hsl(152, 60, 40, .22)
-                      : Brand.hsl(220, 95, 55),
-                  border: voted
-                      ? Border.all(color: Brand.hsl(152, 60, 45, .4))
-                      : null,
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(voted ? 'Voted' : 'Vote for $countryName',
-                      style: Hip.sans(650, 12.5,
-                          color:
-                              voted ? Brand.hsl(152, 60, 62) : Colors.white)),
-                  if (voted) ...[
-                    const SizedBox(width: 5),
-                    Icon(Icons.check, size: 13, color: Brand.hsl(152, 60, 62)),
+          Padding(
+            padding: const EdgeInsets.only(right: 9),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (n != null) ...[
+                    const SizedBox(height: 5),
+                    Text.rich(TextSpan(
+                      children: _figure(
+                        S.c2Count(n),
+                        '$n',
+                        Hip.sans(500, 12.5,
+                            color: Colors.white.withValues(alpha: .6),
+                            height: 1.45),
+                        Hip.mono(700, 12.5, color: Colors.white, height: 1.45),
+                      ),
+                    )),
                   ],
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    if (voted)
+                      Semantics(
+                        button: true,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onUnvote,
+                          child: SizedBox(
+                            height: 44,
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(S.c3Remove,
+                                  style: Hip.sans(600, 12,
+                                      color:
+                                          Colors.white.withValues(alpha: .58))),
+                            ),
+                          ),
+                        ),
+                      )
+                    else if (spent && resetDate != null)
+                      Flexible(
+                        child: Text.rich(
+                          TextSpan(
+                            children: _figure(
+                              S.c2Resets(resetDate!),
+                              resetDate!,
+                              Hip.sans(500, 12,
+                                  color: Colors.white.withValues(alpha: .5)),
+                              Hip.mono(600, 12,
+                                  color: Colors.white.withValues(alpha: .5)),
+                            ),
+                          ),
+                          maxLines: 2,
+                        ),
+                      )
+                    else if (left != null && max != null)
+                      Flexible(
+                        child: Text(S.c2LeftThisRound(left, max),
+                            maxLines: 2,
+                            style: Hip.mono(500, 12,
+                                color: Colors.white.withValues(alpha: .5))),
+                      ),
+                    const Spacer(),
+                    const SizedBox(width: 10),
+                    _VoteButton(
+                      voted: voted,
+                      spent: spent,
+                      onTap: voted || spent ? null : onVote,
+                    ),
+                  ]),
+                  if (voted) ...[
+                    const SizedBox(height: 11),
+                    Container(
+                      padding: const EdgeInsets.only(top: 10),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          top: BorderSide(
+                              color: Colors.white.withValues(alpha: .1)),
+                        ),
+                      ),
+                      child: Text(_thanks,
+                          style: Hip.sans(500, 12,
+                              color: Brand.hsl(152, 55, 62), height: 1.45)),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Text(S.c2Anon,
+                      style: Hip.sans(450, 10.5,
+                          color: Colors.white.withValues(alpha: .38),
+                          height: 1.4)),
                 ]),
-              ),
-            ),
-          ]),
+          ),
         ]),
+      ),
+    );
+  }
+}
+
+/// The panel's one solid action: Vote, Voted, or the spent allowance.
+class _VoteButton extends StatelessWidget {
+  final bool voted;
+  final bool spent;
+  final VoidCallback? onTap;
+  const _VoteButton({required this.voted, required this.spent, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = voted ? S.c3Voted : (spent ? S.c2NoVotes : S.c2Vote);
+    final fg = voted
+        ? Brand.hsl(152, 60, 62)
+        : (spent ? Colors.white.withValues(alpha: .4) : Colors.white);
+    return Semantics(
+      button: true,
+      enabled: onTap != null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 15),
+          decoration: BoxDecoration(
+            color: voted
+                ? Brand.hsl(152, 60, 40, .22)
+                : (spent
+                    ? Colors.white.withValues(alpha: .07)
+                    : Brand.hsl(220, 95, 55)),
+            border: voted
+                ? Border.all(color: Brand.hsl(152, 60, 45, .4))
+                : null,
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(label, style: Hip.sans(650, 12.5, color: fg)),
+            if (voted) ...[
+              const SizedBox(width: 5),
+              Icon(Icons.check, size: 13, color: fg),
+            ],
+          ]),
+        ),
       ),
     );
   }

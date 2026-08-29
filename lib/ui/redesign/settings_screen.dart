@@ -1,102 +1,425 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/notifications.dart';
 import '../../core/premium.dart';
 import '../../core/ui_prefs.dart';
 import '../../state/app_state.dart';
 import '../../vpn_controller.dart';
+import '../strings.dart';
 import 'hip.dart';
+import 'hip_sheet.dart';
 import 'paywall_screen.dart';
 import 'shell.dart';
 
+bool get _isIos => defaultTargetPlatform == TargetPlatform.iOS;
+bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+
+const _privacyUrl = 'https://hideip.net/privacy';
+String get _termsUrl => _isIos
+    ? 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/'
+    : 'https://hideip.net/terms';
+
+void _openUrl(String url) =>
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+
+/// A flat gray tile. The blue one is reserved for flags and for Premium.
+Widget _grayTile(IconData icon) => Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: Hip.line2,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, size: 19, color: Hip.inkSoft),
+    );
+
+Widget _chevron() => Icon(Icons.chevron_right, size: 17, color: Hip.muted2);
+
+/// Three-way palette switch: Light, Dark, or whatever the system says.
+///
+/// A two-state switch cannot express the default, and the default is what
+/// most people never change. Plain parameters so the control can be driven
+/// and read without any app state behind it.
+class ThemeSegment extends StatelessWidget {
+  final AppThemeMode mode;
+  final ValueChanged<AppThemeMode> onChanged;
+  const ThemeSegment({super.key, required this.mode, required this.onChanged});
+
+  static const _labels = {
+    AppThemeMode.light: S.setThemeLight,
+    AppThemeMode.dark: S.setThemeDark,
+    AppThemeMode.system: S.setThemeSystem,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 300),
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: Hip.line2,
+        border: Border.all(color: Hip.line),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(children: [
+        for (final entry in _labels.entries)
+          Expanded(
+            child: Semantics(
+              button: true,
+              selected: mode == entry.key,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onChanged(entry.key),
+                child: AnimatedContainer(
+                  duration: Hip.dur(const Duration(milliseconds: 180)),
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: mode == entry.key ? Hip.card : Colors.transparent,
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: mode == entry.key
+                        ? [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: .14),
+                              blurRadius: 3,
+                              offset: const Offset(0, 1),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: Text(entry.value,
+                      style: Hip.sans(600, 13,
+                          color: mode == entry.key ? Hip.ink : Hip.muted)),
+                ),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
+/// The Speed mode row for a subscriber.
+///
+/// The toggle never moves on its own. With all five device slots taken it
+/// stays where it is and the sheet does the explaining; a switch that flips
+/// and springs back reads as a bug, not as a limit.
+class SpeedModeRow extends StatelessWidget {
+  final bool speedMode;
+  final bool deviceLimit;
+
+  /// Called only when the change is allowed to happen.
+  final ValueChanged<bool> onChanged;
+
+  /// Called instead, when turning it on would need a sixth device slot.
+  final VoidCallback onDeviceLimit;
+
+  const SpeedModeRow({
+    super.key,
+    required this.speedMode,
+    required this.deviceLimit,
+    required this.onChanged,
+    required this.onDeviceLimit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return HipListRow(
+      title: S.tSpeed,
+      titleBadge: HipBadge.blue(S.setBadgeNew),
+      subtitle: S.setSpeedSub,
+      trailing: HipToggle(
+        on: speedMode && !deviceLimit,
+        onChanged: (v) {
+          if (v && deviceLimit) {
+            onDeviceLimit();
+            return;
+          }
+          onChanged(v);
+        },
+      ),
+    );
+  }
+}
+
+/// The two things this app may ever notify about.
+///
+/// Three permission states, three shapes: never asked gets a pre-prompt
+/// before the system dialog, allowed gets the switches, refused gets one calm
+/// line and a way into system settings.
+class NotificationRows extends StatelessWidget {
+  final NotifPerm perm;
+  final bool connAlerts;
+  final bool votingNotifs;
+  final ValueChanged<bool> onConnAlerts;
+  final ValueChanged<bool> onVoting;
+
+  /// Turning voting updates on while nobody has ever been asked: the
+  /// pre-prompt explains first, the system dialog follows only if they agree.
+  final VoidCallback onPrePrompt;
+  final VoidCallback onOpenSettings;
+
+  const NotificationRows({
+    super.key,
+    required this.perm,
+    required this.connAlerts,
+    required this.votingNotifs,
+    required this.onConnAlerts,
+    required this.onVoting,
+    required this.onPrePrompt,
+    required this.onOpenSettings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final blocked = perm == NotifPerm.denied;
+    Widget row(String title, String sub, bool on, ValueChanged<bool> onSet) =>
+        HipListRow(
+          title: title,
+          subtitle: blocked ? S.setNotifBlocked : sub,
+          trailing: blocked
+              ? _MiniButton(S.aOpenSettings, onTap: onOpenSettings)
+              : HipToggle(on: on, onChanged: onSet),
+        );
+    return HipListGroup(children: [
+      row(S.notifConnTitle, S.notifConnBody, connAlerts, onConnAlerts),
+      row(S.notifVoteTitle, S.notifVoteBody, votingNotifs, (v) {
+        if (v && perm == NotifPerm.ask) {
+          onPrePrompt();
+          return;
+        }
+        onVoting(v);
+      }),
+    ]);
+  }
+}
+
+/// A small bordered action inside a list row (app.css `.minibtn`).
+class _MiniButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _MiniButton(this.label, {required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: BoxDecoration(
+            color: Hip.line2,
+            border: Border.all(color: Hip.line, width: 1.5),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child:
+              Text(label, style: Hip.sans(650, 12.5, color: Hip.ink)),
+        ),
+      ),
+    );
+  }
+}
+
+/// The card that sells, shown only while there is no subscription. Selling
+/// stops the moment someone has paid: that is part of what they bought.
+class PremiumSalesCard extends StatelessWidget {
+  final String yearlyPrice;
+  final VoidCallback onTap;
+  const PremiumSalesCard(
+      {super.key, required this.yearlyPrice, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final legal = S.setSellLegal(yearlyPrice).split('|');
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Hip.blueSoft,
+        border: Border.all(color: Hip.blue.withValues(alpha: .2), width: 1.5),
+        borderRadius: BorderRadius.circular(Hip.radius),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const PremiumBadge(),
+        const SizedBox(height: 11),
+        Text(S.setSellTitle,
+            style: Hip.sans(700, 17.5, color: Hip.ink, letterSpacing: -.39)),
+        const SizedBox(height: 5),
+        Text(S.setSellBody,
+            style: Hip.sans(400, 13, color: Hip.muted, height: 1.5)),
+        const SizedBox(height: 15),
+        HipCta(S.setSellCta, onTap: onTap),
+        const SizedBox(height: 9),
+        Center(
+          child: Text.rich(
+            TextSpan(children: [
+              for (var i = 0; i < legal.length; i++)
+                TextSpan(
+                  text: legal[i],
+                  style: i.isOdd
+                      ? Hip.mono(600, 12, color: Hip.muted2)
+                      : Hip.sans(400, 12, color: Hip.muted2),
+                ),
+            ]),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
 /// Settings: Premium status, interface switches, connection behaviour,
-/// and shortcuts.
-class SettingsScreen extends StatelessWidget {
+/// notifications, and shortcuts.
+class SettingsScreen extends StatefulWidget {
   final AppState state;
   final HipNav nav;
   const SettingsScreen({super.key, required this.state, required this.nav});
 
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen>
+    with WidgetsBindingObserver {
+  /// What the system says about notifications. Re-read on resume, because
+  /// the answer can change while the user is away in system settings.
+  NotifPerm _perm = NotifPerm.ask;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _readPermission();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState s) {
+    if (s == AppLifecycleState.resumed) _readPermission();
+  }
+
+  Future<void> _readPermission() async {
+    final perm = await widget.state.notifPermission();
+    if (mounted) setState(() => _perm = perm);
+  }
+
   String _premiumSubtitle(Premium p) => switch (p.status) {
         PremiumStatus.trial =>
-          'Free trial; ends ${formatPremiumDate(p.renews!)}',
-        PremiumStatus.active =>
-          '${PlanInfo.of(p.plan!).name} plan; renews ${formatPremiumDate(p.renews!)}',
-        PremiumStatus.expired => 'Subscription ended; not renewing',
-        PremiumStatus.none => 'Not subscribed; 7 days free to start',
+          S.setPremiumTrial(formatPremiumDate(p.renews!)),
+        PremiumStatus.active => S.setPremiumActive(
+            PlanInfo.of(p.plan!).name, formatPremiumDate(p.renews!)),
+        PremiumStatus.expired => S.setPremiumEnded,
+        PremiumStatus.none => S.setPremiumNone,
       };
+
+  /// The subscription already covers five devices. An explanation with an
+  /// action, not a notice in passing, so it gets a sheet.
+  Future<void> _deviceLimitSheet() => widget.nav.showSheet<void>([
+        const HipSheetTitle(S.f5Title),
+        const HipSheetBody(S.f5Body),
+        HipSheetActions(children: [
+          Builder(
+            builder: (c) =>
+                HipCta(S.aClose, onTap: () => Navigator.of(c).pop()),
+          ),
+        ]),
+      ]);
+
+  Future<void> _askNotifications() async {
+    final go = await widget.nav.showSheet<bool>([
+      const HipSheetTitle(S.c4Title),
+      const HipSheetBody(S.c4Body),
+      HipSheetActions(children: [
+        Builder(
+          builder: (c) => HipCta(S.setNotifAllow,
+              connect: true, onTap: () => Navigator.of(c).pop(true)),
+        ),
+        Builder(
+          builder: (c) => HipCta(S.aNotNow,
+              quiet: true, onTap: () => Navigator.of(c).pop(false)),
+        ),
+      ]),
+    ]);
+    if (go != true) return;
+    final result = await widget.state.requestNotifPermission();
+    if (!mounted) return;
+    setState(() => _perm = result);
+    if (result == NotifPerm.granted) {
+      await widget.state
+          .updatePrefs(widget.state.prefs.copyWith(votingNotifs: true));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final state = widget.state;
+    final nav = widget.nav;
     final prefs = state.prefs;
     final premium = state.premium;
-    // A flat gray tile (the blue one is reserved for flags and Premium).
-    Widget grayTile(IconData icon) => Container(
-          width: 38,
-          height: 38,
-          decoration: BoxDecoration(
-            color: Hip.line2,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, size: 19, color: Hip.inkSoft),
-        );
+    // The plans catalog has to be live for this platform before anything may
+    // advertise a purchase; an existing subscriber keeps their Premium row
+    // regardless (plansOffered stays true while premium is on).
+    final sellable = kPlansAvailable && state.plansOffered;
+    final active = state.activeLocation;
     return SafeArea(
       child: Column(children: [
-        HipNavHead(title: 'Settings', onBack: () => nav.go(HipScreen.home)),
+        HipNavHead(title: S.tSettings, onBack: () => nav.go(HipScreen.home)),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             children: [
-              // The Account section rides on the plans catalog being live for
-              // this platform; an existing subscriber keeps it regardless
-              // (plansOffered stays true while premium is on).
-              if (kPlansAvailable && state.plansOffered) ...[
-                const HipSectionLabel('Account'),
+              if (sellable && premium.status == PremiumStatus.none)
+                PremiumSalesCard(
+                  yearlyPrice: state.planInfo(PremiumPlan.yearly).price,
+                  onTap: () => nav.openPaywall(from: HipScreen.settings),
+                )
+              else if (sellable) ...[
+                const HipSectionLabel(S.setAccount),
                 HipListGroup(children: [
                   HipListRow(
                     leading: const HipFlag(cc: '', child: PremiumCubeIcon()),
-                    title: 'Premium',
-                    titleBadge: premium.isOn ? HipBadge.ok('On') : null,
+                    title: S.tPremium,
+                    titleBadge:
+                        premium.isOn ? HipBadge.ok(S.setPremiumOn) : null,
                     subtitle: _premiumSubtitle(premium),
-                    trailing:
-                        Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
-                    onTap: () => premium.status == PremiumStatus.none
-                        ? nav.openPaywall(from: HipScreen.settings)
-                        : nav.go(HipScreen.premium),
+                    trailing: _chevron(),
+                    onTap: () => nav.go(HipScreen.premium),
                   ),
                   // Only a phone that actually holds a provisioned
                   // subscription can hand access to anything else, so the row
                   // appears with the token rather than with the entitlement.
                   if (state.canLinkDevices)
                     HipListRow(
-                      leading: grayTile(Icons.devices_outlined),
-                      title: 'Linked devices',
-                      subtitle: 'Use Premium in your browser and on desktop',
-                      trailing: Icon(Icons.chevron_right,
-                          size: 17, color: Hip.muted2),
+                      leading: _grayTile(Icons.devices_outlined),
+                      title: S.setLinkedDevices,
+                      subtitle: S.setLinkedDevicesSub,
+                      trailing: _chevron(),
                       onTap: () => nav.go(HipScreen.linkedDevices),
                     ),
                 ]),
               ],
-              const HipSectionLabel('Interface'),
+              const HipSectionLabel(S.setInterface),
               HipListGroup(children: [
-                HipListRow(
-                  leading: grayTile(Icons.dark_mode_outlined),
-                  title: 'Dark mode',
-                  subtitle: 'Darker surfaces across the whole app',
-                  // Placeholder wiring: F4 replaces this toggle with the
-                  // three-way Light / Dark / System segment the design asks
-                  // for. Until then the switch drives the same setting, with
-                  // System reading as off.
-                  trailing: HipToggle(
-                    on: prefs.themeMode == AppThemeMode.dark,
-                    onChanged: (v) => state.setThemeMode(
-                        v ? AppThemeMode.dark : AppThemeMode.light),
-                  ),
+                _ThemeRow(
+                  mode: prefs.themeMode,
+                  onChanged: state.setThemeMode,
                 ),
                 HipListRow(
-                  leading: grayTile(Icons.visibility_outlined),
-                  title: 'Advanced view',
-                  subtitle: 'Show protocols, endpoints and raw configs',
+                  leading: _grayTile(Icons.visibility_outlined),
+                  title: S.setAdvanced,
+                  subtitle: S.setAdvancedSub,
                   trailing: HipToggle(
                     on: prefs.advanced,
                     onChanged: (v) =>
@@ -104,10 +427,10 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ),
               ]),
-              const HipSectionLabel('Connection'),
+              const HipSectionLabel(S.setConnection),
               HipListGroup(children: [
                 HipListRow(
-                  title: 'Connect on launch',
+                  title: S.setAutoConnect,
                   trailing: HipToggle(
                     on: prefs.autoConnect,
                     onChanged: (v) =>
@@ -115,20 +438,15 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ),
                 HipListRow(
-                  title: 'Kill switch',
+                  title: S.tKill,
                   // Android holds the TUN up through a drop (traffic is
                   // blocked, not leaked); iOS can only redial via on-demand.
-                  subtitle: defaultTargetPlatform == TargetPlatform.android
-                      ? 'Block traffic and reconnect if the VPN drops unexpectedly'
-                      : 'Reconnect automatically if the VPN drops unexpectedly',
+                  subtitle: _isAndroid ? S.setKillSub : S.setKillSubIos,
                   trailing: HipToggle(
                     on: prefs.killSwitch,
                     onChanged: (v) async {
                       await state.updatePrefs(prefs.copyWith(killSwitch: v));
-                      if (state.isConnected) {
-                        state.showToast(
-                            'Applies fully from the next connection');
-                      }
+                      if (state.isConnected) state.showToast(S.setKillLater);
                     },
                   ),
                 ),
@@ -137,44 +455,66 @@ class SettingsScreen extends StatelessWidget {
                 // on purpose: WireGuard itself is free, anyone can import
                 // their own through Add connection.
                 if (premium.isOn)
-                  HipListRow(
-                    title: 'Speed mode',
-                    subtitle: state.speedDeviceLimit
-                        ? 'Already set up on 5 devices; turn it off on one of them'
-                        : 'WireGuard on hideip.net locations, where the network allows it',
-                    trailing: HipToggle(
-                      on: prefs.speedMode,
-                      onChanged: (v) async {
-                        await state.setSpeedMode(v);
-                        if (v && state.isConnected) {
-                          state.showToast(
-                              'Applies from the next connection');
-                        }
-                      },
-                    ),
+                  SpeedModeRow(
+                    speedMode: prefs.speedMode,
+                    deviceLimit: state.speedDeviceLimit,
+                    onDeviceLimit: _deviceLimitSheet,
+                    onChanged: (v) async {
+                      await state.setSpeedMode(v);
+                      if (!mounted) return;
+                      // The first attempt is what discovers a full account.
+                      if (v && state.speedDeviceLimit) {
+                        await _deviceLimitSheet();
+                      } else if (v && state.isConnected) {
+                        state.showToast(S.setSpeedLater);
+                      }
+                    },
                   )
-                else if (kPlansAvailable && state.plansOffered)
+                else if (sellable)
                   HipListRow(
-                    title: 'Speed mode',
-                    titleBadge: HipBadge.blue('New'),
+                    title: S.tSpeed,
+                    titleBadge: HipBadge.blue(S.setBadgeNew),
                     // The second clause matters: a lock next to the word
                     // WireGuard would otherwise read as "WireGuard is paid".
-                    subtitle: 'Part of Premium. WireGuard on hideip.net '
-                        'locations; importing your own config is free.',
+                    subtitle: S.setSpeedLocked,
                     trailing:
                         Icon(Icons.lock_outline, size: 17, color: Hip.muted2),
                     onTap: () => nav.openPaywall(from: HipScreen.settings),
                   ),
-                if (defaultTargetPlatform == TargetPlatform.android)
-                  _AndroidAlwaysOnRows(state: state),
+                // Advanced view adds the one row that explains how a server
+                // is picked and what it runs. The prototype prints a fixed
+                // failover chain; this app has no failover order, so the row
+                // names the protocol actually in use instead of inventing one.
+                if (prefs.advanced && active != null)
+                  HipListRow(
+                    title: S.setRouting,
+                    subtitle: S.setRoutingSub(
+                        prefs.autoSelect ? S.tAuto : active.city,
+                        active.protoLabel),
+                    trailing: _chevron(),
+                    onTap: () => nav.openDetail(active),
+                  ),
+                if (_isAndroid) _AndroidAlwaysOnRows(state: state),
               ]),
-              const HipSectionLabel('Privacy'),
+              const _LeftSubnote(S.setSpeedNote),
+              const HipSectionLabel(S.setNotifications),
+              NotificationRows(
+                perm: _perm,
+                connAlerts: prefs.connAlerts,
+                votingNotifs: prefs.votingNotifs,
+                onConnAlerts: (v) =>
+                    state.updatePrefs(prefs.copyWith(connAlerts: v)),
+                onVoting: (v) =>
+                    state.updatePrefs(prefs.copyWith(votingNotifs: v)),
+                onPrePrompt: _askNotifications,
+                onOpenSettings: Notifications.openSettings,
+              ),
+              const HipSectionLabel(S.setPrivacySection),
               HipListGroup(children: [
                 HipListRow(
-                  leading: grayTile(Icons.bar_chart_outlined),
-                  title: 'Anonymous usage counts',
-                  subtitle: 'Three one-time events, no identifiers. '
-                      'Details at hideip.net/privacy',
+                  leading: _grayTile(Icons.bar_chart_outlined),
+                  title: S.setUsage,
+                  subtitle: S.setUsageSub,
                   trailing: HipToggle(
                     on: prefs.usageCounts,
                     onChanged: (v) =>
@@ -182,32 +522,98 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ),
               ]),
-              const HipSectionLabel('Connections'),
+              const HipSectionLabel(S.setConnections),
               HipListGroup(children: [
                 HipListRow(
-                  title: 'Add connection',
-                  subtitle:
-                      'From any provider, or your own WireGuard server',
-                  trailing: Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
+                  title: S.tAddConn,
+                  subtitle: S.setAddConnSub,
+                  trailing: _chevron(),
                   onTap: () => nav.openImport(),
                 ),
                 HipListRow(
-                  title: 'Replay setup',
-                  trailing: Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
-                  onTap: () => nav.go(HipScreen.onboarding),
+                  title: S.setManageServers,
+                  trailing: _chevron(),
+                  onTap: () => nav.go(HipScreen.locations),
+                ),
+              ]),
+              const HipSectionLabel(S.setHelp),
+              HipListGroup(children: [
+                HipListRow(
+                  title: S.setIntroAgain,
+                  subtitle: S.setIntroAgainSub,
+                  trailing: _chevron(),
+                  onTap: () =>
+                      nav.go(HipScreen.onboarding, const {'replay': true}),
+                ),
+                HipListRow(
+                  title: S.setPrivacyPolicy,
+                  trailing:
+                      Icon(Icons.open_in_new, size: 16, color: Hip.muted2),
+                  onTap: () => _openUrl(_privacyUrl),
+                ),
+                HipListRow(
+                  title: S.setTerms,
+                  trailing:
+                      Icon(Icons.open_in_new, size: 16, color: Hip.muted2),
+                  onTap: () => _openUrl(_termsUrl),
                 ),
               ]),
               // Apple guideline 2.3.10: no other-platform mentions on iOS.
-              HipSubnote(defaultTargetPlatform == TargetPlatform.iOS
-                  ? 'hideip.net · Open source · No logs'
-                  : 'hideip.net · Open source · No logs\n'
-                      'Same app on iOS and Android.'),
+              HipSubnote(_isIos ? S.setFooter : S.setFooterBoth),
+              const SizedBox(height: 12),
             ],
           ),
         ),
       ]),
     );
   }
+}
+
+/// The Theme row: a title, the three-way segment, and one line saying what
+/// the default does. Too tall for [HipListRow], same padding as one.
+class _ThemeRow extends StatelessWidget {
+  final AppThemeMode mode;
+  final ValueChanged<AppThemeMode> onChanged;
+  const _ThemeRow({required this.mode, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _grayTile(Icons.dark_mode_outlined),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(S.setTheme,
+                style: Hip.sans(650, Hip.titleSize,
+                    color: Hip.ink, letterSpacing: -.17)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 9, 0, 7),
+              child: ThemeSegment(mode: mode, onChanged: onChanged),
+            ),
+            Text(S.setThemeNote,
+                style: Hip.sans(400, Hip.bodySize, color: Hip.muted)),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+/// A footnote that belongs to the list above it, so it reads from the left
+/// rather than being centered under the screen.
+class _LeftSubnote extends StatelessWidget {
+  final String text;
+  const _LeftSubnote(this.text);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(14, 9, 14, 0),
+        child: Text(text,
+            style: Hip.sans(400, Hip.captionSize,
+                color: Hip.muted2, height: 1.5)),
+      );
 }
 
 /// The Always-on pair of rows (Android only): the in-app opt-in toggle and a
@@ -253,11 +659,9 @@ class _AndroidAlwaysOnRowsState extends State<_AndroidAlwaysOnRows>
 
   String get _systemSubtitle {
     final st = _status;
-    if (st == null) return 'Checking the system Always-on state…';
-    if (!st.alwaysOn) return 'System Always-on is off · tap to open';
-    return st.lockdown
-        ? 'System Always-on is on, with Block connections without VPN'
-        : 'System Always-on is on';
+    if (st == null) return S.setVpnChecking;
+    if (!st.alwaysOn) return S.setVpnOff;
+    return st.lockdown ? S.setVpnOnLockdown : S.setVpnOn;
   }
 
   @override
@@ -266,9 +670,8 @@ class _AndroidAlwaysOnRowsState extends State<_AndroidAlwaysOnRows>
     final prefs = state.prefs;
     return Column(children: [
       HipListRow(
-        title: 'Always-on VPN',
-        subtitle:
-            'Reconnect the last server when Android\'s Always-on VPN starts hideip.net',
+        title: S.setAlwaysOn,
+        subtitle: S.setAlwaysOnSub,
         trailing: HipToggle(
           on: prefs.alwaysOn,
           onChanged: (v) async {
@@ -276,8 +679,7 @@ class _AndroidAlwaysOnRowsState extends State<_AndroidAlwaysOnRows>
             // The system half can only be flipped by the user in Android
             // settings; take them straight there when it is still off.
             if (v && _status?.alwaysOn != true) {
-              state.showToast(
-                  'Tap the gear next to hideip.net and turn on Always-on VPN');
+              state.showToast(S.setAlwaysOnHint);
               await VpnController.openVpnSettings();
             }
           },
@@ -285,9 +687,9 @@ class _AndroidAlwaysOnRowsState extends State<_AndroidAlwaysOnRows>
       ),
       Container(height: 1, color: Hip.line2),
       HipListRow(
-        title: 'Android VPN settings',
+        title: S.setVpnSettings,
         subtitle: _systemSubtitle,
-        trailing: Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
+        trailing: _chevron(),
         onTap: VpnController.openVpnSettings,
       ),
     ]);

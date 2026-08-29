@@ -1,0 +1,220 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:hideip_vpn/core/notifications.dart';
+import 'package:hideip_vpn/core/ui_prefs.dart';
+import 'package:hideip_vpn/ui/redesign/hip.dart';
+import 'package:hideip_vpn/ui/redesign/settings_screen.dart';
+
+Widget _host(Widget child) =>
+    MaterialApp(home: Scaffold(body: SingleChildScrollView(child: child)));
+
+Widget _notifications(
+  NotifPerm perm, {
+  bool connAlerts = true,
+  bool votingNotifs = false,
+  ValueChanged<bool>? onConnAlerts,
+  ValueChanged<bool>? onVoting,
+  VoidCallback? onPrePrompt,
+  VoidCallback? onOpenSettings,
+}) =>
+    _host(NotificationRows(
+      perm: perm,
+      connAlerts: connAlerts,
+      votingNotifs: votingNotifs,
+      onConnAlerts: onConnAlerts ?? (_) {},
+      onVoting: onVoting ?? (_) {},
+      onPrePrompt: onPrePrompt ?? () {},
+      onOpenSettings: onOpenSettings ?? () {},
+    ));
+
+void main() {
+  group('notifications, three permission states', () {
+    testWidgets('allowed shows both switches and what they do',
+        (tester) async {
+      await tester.pumpWidget(_notifications(NotifPerm.granted));
+
+      expect(find.text('Connection alerts'), findsOneWidget);
+      expect(find.text('Tell you if the VPN drops'), findsOneWidget);
+      expect(find.text('Voting updates'), findsOneWidget);
+      expect(find.text('When a location you voted for becomes available'),
+          findsOneWidget);
+      expect(find.byType(HipToggle), findsNWidgets(2));
+      expect(find.text('Open settings'), findsNothing);
+    });
+
+    testWidgets('refused replaces both switches with one line and one action',
+        (tester) async {
+      await tester.pumpWidget(_notifications(NotifPerm.denied));
+
+      expect(find.text('Notifications are turned off in system settings.'),
+          findsNWidgets(2));
+      expect(find.text('Open settings'), findsNWidgets(2));
+      expect(find.byType(HipToggle), findsNothing);
+      expect(find.text('Tell you if the VPN drops'), findsNothing);
+    });
+
+    testWidgets('refused walks the user into system settings', (tester) async {
+      var opened = 0;
+      await tester.pumpWidget(
+          _notifications(NotifPerm.denied, onOpenSettings: () => opened++));
+
+      await tester.tap(find.text('Open settings').first);
+      expect(opened, 1);
+    });
+
+    testWidgets('never asked explains before the system dialog',
+        (tester) async {
+      var prompted = 0;
+      var written = 0;
+      await tester.pumpWidget(_notifications(
+        NotifPerm.ask,
+        onPrePrompt: () => prompted++,
+        onVoting: (_) => written++,
+      ));
+
+      // The second toggle is Voting updates.
+      await tester.tap(find.byType(HipToggle).last);
+      expect(prompted, 1);
+      expect(written, 0, reason: 'the preference waits for the answer');
+    });
+
+    testWidgets('turning voting updates off never re-asks', (tester) async {
+      var prompted = 0;
+      bool? written;
+      await tester.pumpWidget(_notifications(
+        NotifPerm.ask,
+        votingNotifs: true,
+        onPrePrompt: () => prompted++,
+        onVoting: (v) => written = v,
+      ));
+
+      await tester.tap(find.byType(HipToggle).last);
+      expect(prompted, 0);
+      expect(written, isFalse);
+    });
+  });
+
+  group('theme', () {
+    testWidgets('the segment offers all three modes', (tester) async {
+      await tester.pumpWidget(_host(
+          ThemeSegment(mode: AppThemeMode.system, onChanged: (_) {})));
+
+      expect(find.text('Light'), findsOneWidget);
+      expect(find.text('Dark'), findsOneWidget);
+      expect(find.text('System'), findsOneWidget);
+    });
+
+    testWidgets('picking one reports it', (tester) async {
+      final picked = <AppThemeMode>[];
+      await tester.pumpWidget(_host(
+          ThemeSegment(mode: AppThemeMode.system, onChanged: picked.add)));
+
+      await tester.tap(find.text('Dark'));
+      await tester.tap(find.text('Light'));
+      expect(picked, [AppThemeMode.dark, AppThemeMode.light]);
+    });
+
+    testWidgets('the mode it is given is the one it shows', (tester) async {
+      var mode = AppThemeMode.system;
+      await tester.pumpWidget(_host(StatefulBuilder(
+        builder: (context, setState) => ThemeSegment(
+          mode: mode,
+          onChanged: (m) => setState(() => mode = m),
+        ),
+      )));
+
+      await tester.tap(find.text('Dark'));
+      await tester.pumpAndSettle();
+      expect(mode, AppThemeMode.dark);
+    });
+  });
+
+  group('speed mode against the device limit', () {
+    Widget speedRow({
+      required bool deviceLimit,
+      required bool start,
+      required VoidCallback onLimit,
+      List<bool>? writes,
+    }) {
+      var on = start;
+      return _host(StatefulBuilder(
+        builder: (context, setState) => HipListGroup(children: [
+          SpeedModeRow(
+            speedMode: on,
+            deviceLimit: deviceLimit,
+            onDeviceLimit: onLimit,
+            onChanged: (v) {
+              writes?.add(v);
+              setState(() => on = v);
+            },
+          ),
+        ]),
+      ));
+    }
+
+    testWidgets('a sixth device explains instead of flipping the switch',
+        (tester) async {
+      var raised = 0;
+      final writes = <bool>[];
+      await tester.pumpWidget(speedRow(
+        deviceLimit: true,
+        start: false,
+        onLimit: () => raised++,
+        writes: writes,
+      ));
+
+      await tester.tap(find.byType(HipToggle));
+      await tester.pumpAndSettle();
+
+      expect(raised, 1);
+      expect(writes, isEmpty, reason: 'nothing is written on a full account');
+      expect(tester.widget<HipToggle>(find.byType(HipToggle)).on, isFalse,
+          reason: 'the switch does not move and spring back');
+    });
+
+    testWidgets('a full account reads as off even when the intent was on',
+        (tester) async {
+      await tester.pumpWidget(speedRow(
+        deviceLimit: true,
+        start: true,
+        onLimit: () {},
+      ));
+
+      expect(tester.widget<HipToggle>(find.byType(HipToggle)).on, isFalse);
+    });
+
+    testWidgets('with a slot free the switch works normally', (tester) async {
+      final writes = <bool>[];
+      await tester.pumpWidget(speedRow(
+        deviceLimit: false,
+        start: false,
+        onLimit: () => fail('no limit to report'),
+        writes: writes,
+      ));
+
+      await tester.tap(find.byType(HipToggle));
+      await tester.pumpAndSettle();
+
+      expect(writes, [true]);
+      expect(tester.widget<HipToggle>(find.byType(HipToggle)).on, isTrue);
+    });
+  });
+
+  group('the card that sells', () {
+    testWidgets('states the price and what happens after the free week',
+        (tester) async {
+      await tester.pumpWidget(_host(
+          PremiumSalesCard(yearlyPrice: r'$29.99', onTap: () {})));
+
+      expect(find.text('Every location, stealth by default.'), findsOneWidget);
+      expect(
+          find.text(
+              'All hideip.net locations, Speed mode, no logs, no account.'),
+          findsOneWidget);
+      expect(find.text('Try 7 days free'), findsOneWidget);
+      expect(find.textContaining(r'Then $29.99 per year. Cancel anytime.'),
+          findsOneWidget);
+    });
+  });
+}

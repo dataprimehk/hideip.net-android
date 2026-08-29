@@ -93,25 +93,38 @@ class PlanInfo {
   final String name;
   final String price;
   final String per;
-  final String note;
+
+  /// How the plan bills, as a phrase: the fallback for when there is nothing
+  /// better to say than the period itself.
+  final String period;
 
   /// Whether the first period is the 7-day free trial (yearly only).
   final bool trial;
 
-  const PlanInfo(this.name, this.price, this.per, this.note,
-      {this.trial = false});
+  /// The yearly total restated as a monthly figure, when it can be stated at
+  /// all. [withPrice] drops it: a per-month amount cannot be worked out from
+  /// a formatted total in a currency this app does not parse, and a wrong
+  /// one would be a price claim.
+  final String? perMonth;
 
-  static const yearly =
-      PlanInfo('Yearly', r'$29.99', 'year', '7-day free trial', trial: true);
+  const PlanInfo(this.name, this.price, this.per, this.period,
+      {this.trial = false, this.perMonth});
+
+  static const yearly = PlanInfo('Yearly', r'$29.99', 'year', 'billed yearly',
+      trial: true, perMonth: r'$2.50');
   static const monthly =
       PlanInfo('Monthly', r'$4.99', 'month', 'billed monthly');
 
   static PlanInfo of(PremiumPlan plan) =>
       plan == PremiumPlan.yearly ? yearly : monthly;
 
+  /// The plan's short note under its name: the monthly equivalent where one
+  /// is known, the billing period otherwise.
+  String get note => perMonth == null ? period : '$perMonth per month';
+
   /// The same plan with the store's localized price string.
   PlanInfo withPrice(String price) =>
-      PlanInfo(name, price, per, note, trial: trial);
+      PlanInfo(name, price, per, period, trial: trial);
 }
 
 class Premium {

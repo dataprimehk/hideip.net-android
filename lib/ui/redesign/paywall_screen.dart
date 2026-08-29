@@ -9,7 +9,9 @@ import '../../core/premium.dart';
 import '../../core/purchase_service.dart';
 import '../../state/app_state.dart';
 import '../brand.dart';
+import '../strings.dart';
 import 'hip.dart';
+import 'locked_row.dart';
 import 'shell.dart';
 
 bool get _ios => defaultTargetPlatform == TargetPlatform.iOS;
@@ -32,6 +34,42 @@ const _privacyUrl = 'https://hideip.net/privacy';
 
 void _openUrl(String url) =>
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+
+/// Legal footnote on a dark surface. A `|segment|` renders in mono at full
+/// opacity: it is always a price or a date.
+Widget _legal(String text) {
+  final parts = text.split('|');
+  return Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: Text.rich(
+      TextSpan(children: [
+        for (var i = 0; i < parts.length; i++)
+          TextSpan(
+            text: parts[i],
+            style: i.isOdd
+                ? Hip.mono(600, 11, color: Colors.white.withValues(alpha: .7))
+                : Hip.sans(400, 11,
+                    color: Colors.white.withValues(alpha: .45), height: 1.5),
+          ),
+      ]),
+      textAlign: TextAlign.center,
+    ),
+  );
+}
+
+/// Locations ordered by measured latency, quickest first. An unmeasured one
+/// sorts last rather than pretending to be instant.
+List<Location> sortedByPing(AppState state, List<Location> src) {
+  final list = [...src];
+  list.sort((a, b) {
+    final pa = state.pingFor(a.profile);
+    final pb = state.pingFor(b.profile);
+    final ma = pa is PingOk ? pa.ms : 1 << 30;
+    final mb = pb is PingOk ? pb.ms : 1 << 30;
+    return ma.compareTo(mb);
+  });
+  return list;
+}
 
 /// The brand cube outline used everywhere Premium is referenced. Proportions
 /// follow the prototype icon (a 15/24 rounded square at stroke 2).
@@ -75,7 +113,7 @@ class PremiumBadge extends StatelessWidget {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         PremiumCubeIcon(size: 13, color: dim ? Hip.muted : Colors.white),
         const SizedBox(width: 5),
-        Text('Premium',
+        Text(S.tPremium,
             style: Hip.sans(600, 11.5,
                 color: dim ? Hip.muted : Colors.white, letterSpacing: .35)),
       ]),
@@ -83,278 +121,152 @@ class PremiumBadge extends StatelessWidget {
   }
 }
 
-/// The paywall: one plan in two variants, priced and disclosed before the
-/// purchase, with restore and the legal links (App Store guideline 3.1.2).
-/// Always on the dark surface, like onboarding.
-class PaywallScreen extends StatefulWidget {
-  final AppState state;
-  final HipNav nav;
-  final HipScreen from;
+/// What the primary button says. The yearly plan starts with seven free days
+/// and says so; the monthly plan bills right away.
+String paywallCtaLabel(PlanInfo info, {required bool failed}) => failed
+    ? S.aTryAgain
+    : info.trial
+        ? S.pwCtaTrial
+        : S.pwCtaBuy;
 
-  /// The locked location the user tapped to get here ([Location.id]), when
-  /// there was one. F4 turns it into the personalised title.
-  final String? locId;
-  const PaywallScreen({
+/// Everything on the paywall below the header: what the plan gives, which of
+/// its two variants is picked, one price in large type, the legal line for
+/// that variant and the primary button.
+///
+/// Plain parameters on purpose: the offer can be laid out and read without a
+/// store, a subscription, or any app state behind it.
+class PaywallOffer extends StatelessWidget {
+  final PlanInfo yearly;
+  final PlanInfo monthly;
+  final PremiumPlan plan;
+  final ValueChanged<PremiumPlan> onPlan;
+
+  /// The city of the locked location that led here, when one did.
+  final String? city;
+
+  /// How many hideip.net locations the plan covers, or null while the catalog
+  /// has not been read and there is no honest number to print.
+  final int? locationCount;
+
+  /// The first charge date for the yearly plan, already formatted.
+  final String trialEnds;
+
+  /// "App Store" or "Google Play".
+  final String storeName;
+
+  /// The previous attempt failed: the banner shows and the button retries.
+  final bool failed;
+
+  /// The store's own words for that failure, when it gave any.
+  final String? storeMessage;
+
+  final VoidCallback onBuy;
+  final VoidCallback onRestore;
+  final VoidCallback onTerms;
+  final VoidCallback onPrivacy;
+
+  const PaywallOffer({
     super.key,
-    required this.state,
-    required this.nav,
-    required this.from,
-    this.locId,
+    required this.yearly,
+    required this.monthly,
+    required this.plan,
+    required this.onPlan,
+    required this.trialEnds,
+    required this.storeName,
+    required this.onBuy,
+    required this.onRestore,
+    required this.onTerms,
+    required this.onPrivacy,
+    this.city,
+    this.locationCount,
+    this.failed = false,
+    this.storeMessage,
   });
 
-  @override
-  State<PaywallScreen> createState() => _PaywallScreenState();
-}
-
-enum _PwPhase { plans, buying, success, error }
-
-class _PaywallScreenState extends State<PaywallScreen> {
-  PremiumPlan _plan = PremiumPlan.yearly;
-  _PwPhase _phase = _PwPhase.plans;
-  String _busyMsg = '';
-
-  void _back() => widget.nav.go(widget.from);
-
-  Future<void> _buy() async {
-    setState(() {
-      _busyMsg = 'Confirming with the $_storeName';
-      _phase = _PwPhase.buying;
-    });
-    final outcome = await widget.state.purchasePremium(_plan);
-    if (!mounted) return;
-    switch (outcome) {
-      case PurchaseOutcome.success:
-        Haptics.success();
-        setState(() => _phase = _PwPhase.success);
-      case PurchaseOutcome.canceled:
-        // Their choice, not a failure: back to the plans without a banner.
-        setState(() => _phase = _PwPhase.plans);
-      case PurchaseOutcome.failed:
-        Haptics.error();
-        setState(() => _phase = _PwPhase.error);
-    }
-  }
-
-  Future<void> _restore() async {
-    final prev = _phase;
-    setState(() {
-      _busyMsg = 'Checking your previous purchases';
-      _phase = _PwPhase.buying;
-    });
-    await widget.state.restorePurchases();
-    if (!mounted) return;
-    setState(() => _phase =
-        widget.state.premium.isOn ? _PwPhase.success : prev);
-  }
-
-  String get _trialEnds =>
-      formatPremiumDate(DateTime.now().add(const Duration(days: 7)));
+  PlanInfo get _info => plan == PremiumPlan.yearly ? yearly : monthly;
 
   @override
   Widget build(BuildContext context) {
-    if (_phase == _PwPhase.success) return _success();
-
-    final info = widget.state.planInfo(_plan);
-    return Container(
-      color: Hip.dark,
-      child: SafeArea(
-        child: Stack(children: [
-          Column(children: [
-            HipNavHead(
-              title: '',
-              onBack: _back,
-              onDark: true,
-              trailing: HipIconButton(Icons.close,
-                  onTap: _back, color: Colors.white.withValues(alpha: .6)),
-            ),
-            Expanded(
-              child: LayoutBuilder(builder: (context, box) {
-                return SingleChildScrollView(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minHeight: box.maxHeight),
-                    child: IntrinsicHeight(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Column(children: [
-                          _hero(),
-                          const Spacer(),
-                          _benefits(),
-                          const Spacer(),
-                          _plans(),
-                          const Spacer(),
-                          if (_phase == _PwPhase.error) _errorBanner(),
-                          _legal(info.trial
-                              ? '7 days free, then |${info.price}| per ${info.per}. '
-                                  'Nothing is charged before |$_trialEnds|. '
-                                  'Auto-renews; cancel anytime in your $_storeName settings.'
-                              : '|${info.price}| per ${info.per}, charged today. '
-                                  'Auto-renews; cancel anytime in your $_storeName settings.'),
-                          _links(),
-                        ]),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 12, 22, 20),
-              child: HipCta(
-                  _phase == _PwPhase.error
-                      ? 'Try again'
-                      : info.trial
-                          ? 'Start 7-day free trial'
-                          : 'Subscribe now',
-                  connect: true,
-                  onTap: _buy),
-            ),
-          ]),
-          if (_phase == _PwPhase.buying) _buyingOverlay(),
-        ]),
-      ),
-    );
-  }
-
-  Widget _hero() {
-    Widget cube({bool hero = false}) => Container(
-          width: hero ? 43 : 33,
-          height: hero ? 43 : 33,
-          decoration: BoxDecoration(
-            color: hero ? null : Colors.white.withValues(alpha: .05),
-            gradient: hero
-                ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Brand.hsl(220, 95, 55), Brand.hsl(197, 85, 49)],
-                  )
-                : null,
-            border: Border.all(
-                width: 2,
-                color: hero
-                    ? Brand.hsl(220, 95, 72, .9)
-                    : Colors.white.withValues(alpha: .14)),
-            borderRadius: BorderRadius.circular(hero ? 12 : 10),
-            boxShadow: hero
-                ? [
-                    BoxShadow(
-                      color: Brand.hsl(220, 95, 55, .55),
-                      blurRadius: 40,
-                      offset: const Offset(0, 14),
-                      spreadRadius: -8,
-                    ),
-                  ]
-                : null,
-          ),
-        );
+    final info = _info;
     return Column(children: [
-      const SizedBox(height: 2),
-      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        cube(),
-        const SizedBox(width: 10),
-        cube(hero: true),
-        const SizedBox(width: 10),
-        cube(),
-      ]),
-      const SizedBox(height: 13),
-      const PremiumBadge(),
-      const SizedBox(height: 11),
-      Text('One plan. Everything included.',
-          style: Hip.sans(750, 23,
-              color: Colors.white, height: 1.18, letterSpacing: -.64)),
-      const SizedBox(height: 6),
-      Text('Fast locations and stealth protocols, no account needed.',
-          textAlign: TextAlign.center,
-          style: Hip.sans(400, 13,
-              color: Colors.white.withValues(alpha: .58), height: 1.5)),
+      Expanded(
+        // Centered rather than spread with flexible gaps: the offer has to
+        // survive a short screen and a large text scale, and a column that
+        // measures itself never clips what it cannot fit.
+        child: LayoutBuilder(builder: (context, box) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: box.maxHeight),
+              child: Center(
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    _hero(),
+                    const SizedBox(height: 22),
+                    _benefits(),
+                    const SizedBox(height: 22),
+                    _segment(),
+                    _price(info),
+                    const SizedBox(height: 18),
+                    if (failed) _errorBanner(),
+                    _legal(info.trial
+                        ? S.pwLegalTrial(trialEnds, storeName)
+                        : S.pwLegalNow(storeName)),
+                    _links(),
+                  ]),
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(22, 12, 22, 20),
+        child: HipCta(paywallCtaLabel(info, failed: failed),
+            connect: true, onTap: onBuy),
+      ),
     ]);
   }
 
-  Widget _benefits() {
-    // A compact checklist reads better than a tile grid for short claims:
-    // one line per promise, bold lead, muted detail.
-    Widget row(String title, String sub) => Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(children: [
-            Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                color: Brand.hsl(220, 95, 60, .16),
-                borderRadius: BorderRadius.circular(7),
-              ),
-              child: Icon(Icons.check, size: 14, color: Brand.hsl(220, 95, 70)),
-            ),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Text.rich(
-                TextSpan(children: [
-                  TextSpan(
-                      text: title,
-                      style: Hip.sans(650, 13.5,
-                          color: Colors.white, letterSpacing: -.14)),
-                  TextSpan(
-                      text: '; $sub',
-                      style: Hip.sans(400, 13.5,
-                          color: Colors.white.withValues(alpha: .55))),
-                ]),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ]),
-        );
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      child: Column(children: [
-        row('Works on filtered networks', 'stealth by default'),
-        row('All locations', 'every location included'),
-        row('Speed mode', 'WireGuard on every hideip.net location'),
-        row('No logs', 'nothing to record or sell'),
-        row('No account', 'no email, no login'),
-      ]),
-    );
+  Widget _hero() {
+    final where = city;
+    return Column(children: [
+      const SizedBox(height: 2),
+      const PremiumBadge(),
+      const SizedBox(height: 11),
+      Text(where == null ? S.pwTitle : S.pwTitleCity(where),
+          textAlign: TextAlign.center,
+          style: Hip.sans(750, 23,
+              color: Colors.white, height: 1.18, letterSpacing: -.64)),
+      const SizedBox(height: 6),
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 280),
+        child: Text(S.pwSub,
+            textAlign: TextAlign.center,
+            style: Hip.sans(400, 13,
+                color: Colors.white.withValues(alpha: .58), height: 1.5)),
+      ),
+    ]);
   }
 
-  Widget _plans() {
-    Widget planRow(PremiumPlan plan, {Widget? nameBadge}) {
-      final info = widget.state.planInfo(plan);
-      final on = _plan == plan;
-      return GestureDetector(
-        onTap: () {
-          if (_plan != plan) Haptics.selection();
-          setState(() => _plan = plan);
-        },
-        child: Container(
-          margin: EdgeInsets.only(top: plan == PremiumPlan.yearly ? 0 : 9),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          decoration: BoxDecoration(
-            color: on
-                ? Brand.hsl(220, 95, 55, .12)
-                : Colors.white.withValues(alpha: .04),
-            // The prototype's 1.5px border + 1px ring reads as one 2.5px
-            // stroke; a shadow ring would bleed through the translucent fill.
-            border: Border.all(
-                width: on ? 2.5 : 1.5,
-                color: on
-                    ? Brand.hsl(220, 95, 62)
-                    : Colors.white.withValues(alpha: .14)),
-            borderRadius: BorderRadius.circular(Hip.radius),
-          ),
-          child: Row(children: [
-            Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                color: on ? Hip.blue : null,
-                border: on
-                    ? null
-                    : Border.all(
-                        color: Colors.white.withValues(alpha: .3), width: 1.8),
-                shape: BoxShape.circle,
-              ),
-              child: on
-                  ? const Icon(Icons.check, size: 13, color: Colors.white)
-                  : null,
+  /// Five rows, one promise each, divided by hairlines. The first carries the
+  /// number of locations, which is the claim that does the selling.
+  Widget _benefits() {
+    Widget row(String title,
+            {String? sub, bool badge = false, bool first = false}) =>
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 2),
+          decoration: first
+              ? null
+              : BoxDecoration(
+                  border: Border(
+                      top: BorderSide(
+                          color: Colors.white.withValues(alpha: .09)))),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Icon(Icons.check, size: 16, color: Brand.hsl(220, 95, 68)),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -362,54 +274,148 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(children: [
-                      Text(info.name,
-                          style: Hip.sans(650, 15,
-                              color: Colors.white, letterSpacing: -.15)),
-                      if (nameBadge != null) ...[
+                      Flexible(
+                        child: Text(title,
+                            style: Hip.sans(550, 14.5,
+                                color: Colors.white, letterSpacing: -.17)),
+                      ),
+                      if (badge) ...[
                         const SizedBox(width: 8),
-                        nameBadge,
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Brand.hsl(220, 95, 60, .2),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(S.setBadgeNew.toUpperCase(),
+                              style: Hip.sans(700, 9.5,
+                                  color: Brand.hsl(220, 95, 78),
+                                  letterSpacing: .5)),
+                        ),
                       ],
                     ]),
-                    const SizedBox(height: 3),
-                    Text(info.note,
-                        style: Hip.sans(550, 11.5,
-                            color: Colors.white.withValues(alpha: .55),
-                            letterSpacing: .12)),
+                    if (sub != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(sub,
+                            style: Hip.sans(500, 12,
+                                color: Colors.white.withValues(alpha: .55))),
+                      ),
                   ]),
             ),
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text(info.price,
-                  style: Hip.sans(750, 17,
-                      color: Colors.white, letterSpacing: -.17)),
-              const SizedBox(height: 2),
-              Text('per ${info.per}',
-                  style: Hip.sans(550, 11,
-                      color: Colors.white.withValues(alpha: .5))),
-            ]),
           ]),
+        );
+    final count = locationCount;
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Column(children: [
+        row(count == null ? S.pwAllLocationsPlain : S.pwAllLocations(count),
+            first: true),
+        row(S.pwSpeed, sub: S.pwSpeedSub, badge: true),
+        row(S.pwBlocked),
+        row(S.pwNoLogs),
+        row(S.pwDevices),
+      ]),
+    );
+  }
+
+  /// One choice, then one price. Two priced cards side by side make the
+  /// reader compare offers; a segment makes them pick a rhythm.
+  Widget _segment() {
+    final yearlyOn = plan == PremiumPlan.yearly;
+    Widget tab(PremiumPlan p, PlanInfo info, {Widget? badge}) {
+      final on = plan == p;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () {
+            if (!on) Haptics.selection();
+            onPlan(p);
+          },
+          child: AnimatedContainer(
+            duration: Hip.dur(const Duration(milliseconds: 180)),
+            height: 46,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: on ? Hip.blue : Colors.transparent,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text(info.name,
+                  style: Hip.sans(600, 14,
+                      color:
+                          on ? Colors.white : Colors.white.withValues(alpha: .6),
+                      letterSpacing: -.14)),
+              if (badge != null) ...[const SizedBox(width: 8), badge],
+            ]),
+          ),
         ),
       );
     }
 
-    return Column(children: [
-      planRow(
-        PremiumPlan.yearly,
-        nameBadge: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-          decoration: BoxDecoration(
-            color: Brand.hsl(152, 60, 46, .18),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text('Save 50%',
-              style: Hip.sans(600, 10.5, color: Brand.hsl(152, 60, 58))),
-        ),
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .06),
+        border: Border.all(color: Colors.white.withValues(alpha: .1)),
+        borderRadius: BorderRadius.circular(17),
       ),
-      planRow(PremiumPlan.monthly),
-    ]);
+      child: Row(children: [
+        tab(PremiumPlan.yearly, yearly,
+            badge: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: yearlyOn
+                    ? Colors.white.withValues(alpha: .22)
+                    : Brand.hsl(152, 60, 46, .18),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(S.pwSave,
+                  style: Hip.sans(650, 10.5,
+                      color: yearlyOn ? Colors.white : Brand.hsl(152, 60, 60),
+                      letterSpacing: .2)),
+            )),
+        tab(PremiumPlan.monthly, monthly),
+      ]),
+    );
+  }
+
+  Widget _price(PlanInfo info) {
+    final perMonth = info.perMonth;
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(children: [
+        Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Flexible(
+                child: Text(info.price,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Hip.mono(700, 28,
+                        color: Colors.white, letterSpacing: -.7)),
+              ),
+              const SizedBox(width: 6),
+              Text(S.pwPer(info.per),
+                  style: Hip.sans(550, 14,
+                      color: Colors.white.withValues(alpha: .55))),
+            ]),
+        const SizedBox(height: 6),
+        Text(
+            info.trial
+                ? (perMonth == null ? S.pwTrialFree : S.pwPerMonth(perMonth))
+                : S.pwMonthlyNote,
+            textAlign: TextAlign.center,
+            style: Hip.sans(400, 12.5,
+                color: Colors.white.withValues(alpha: .5), height: 1.5)),
+      ]),
+    );
   }
 
   Widget _errorBanner() {
-    final storeMsg = widget.state.purchases.lastError;
+    final msg = storeMessage;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
@@ -423,35 +429,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
         const SizedBox(width: 11),
         Expanded(
           child: Text(
-              "That didn't go through, and you haven't been charged. "
-              'Check your payment method, then try again; or restore an '
-              'earlier purchase.'
-              '${storeMsg != null && storeMsg.isNotEmpty ? '\n($storeMsg)' : ''}',
+              '${S.pwFailed}${msg != null && msg.isNotEmpty ? '\n($msg)' : ''}',
               style: Hip.sans(400, 12.5,
                   color: Brand.hsl(35, 90, 78), height: 1.5)),
         ),
       ]),
-    );
-  }
-
-  /// Legal footnote; |text| segments render in mono at full opacity.
-  Widget _legal(String text) {
-    final parts = text.split('|');
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Text.rich(
-        TextSpan(children: [
-          for (var i = 0; i < parts.length; i++)
-            TextSpan(
-              text: parts[i],
-              style: i.isOdd
-                  ? Hip.mono(600, 11, color: Colors.white.withValues(alpha: .7))
-                  : Hip.sans(400, 11,
-                      color: Colors.white.withValues(alpha: .45), height: 1.5),
-            ),
-        ]),
-        textAlign: TextAlign.center,
-      ),
     );
   }
 
@@ -474,15 +456,158 @@ class _PaywallScreenState extends State<PaywallScreen> {
         fit: BoxFit.scaleDown,
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           GestureDetector(
-              onTap: _restore, child: Text('Restore purchases', style: style)),
+              onTap: onRestore, child: Text(S.pwRestore, style: style)),
+          dot(),
+          GestureDetector(onTap: onTerms, child: Text(S.setTerms, style: style)),
           dot(),
           GestureDetector(
-              onTap: () => _openUrl(_termsUrl),
-              child: Text('Terms of Use', style: style)),
-          dot(),
-          GestureDetector(
-              onTap: () => _openUrl(_privacyUrl),
-              child: Text('Privacy Policy', style: style)),
+              onTap: onPrivacy, child: Text(S.setPrivacyPolicy, style: style)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// The paywall: one plan in two variants, priced and disclosed before the
+/// purchase, with restore and the legal links (App Store guideline 3.1.2).
+/// Always on the dark surface, like onboarding.
+class PaywallScreen extends StatefulWidget {
+  final AppState state;
+  final HipNav nav;
+  final HipScreen from;
+
+  /// The locked location the user tapped to get here ([Location.id]), when
+  /// there was one. It is what personalises the headline.
+  final String? locId;
+  const PaywallScreen({
+    super.key,
+    required this.state,
+    required this.nav,
+    required this.from,
+    this.locId,
+  });
+
+  @override
+  State<PaywallScreen> createState() => _PaywallScreenState();
+}
+
+enum _PwPhase { plans, buying, success, error }
+
+class _PaywallScreenState extends State<PaywallScreen> {
+  PremiumPlan _plan = PremiumPlan.yearly;
+  _PwPhase _phase = _PwPhase.plans;
+  String _busyMsg = '';
+
+  /// The locations that were locked when this screen opened. Kept because
+  /// they are exactly what a purchase unlocks: the success screen owes the
+  /// user those, not whatever happens to be in the server list.
+  late final List<Location> _wasLocked;
+
+  @override
+  void initState() {
+    super.initState();
+    _wasLocked = sortedByPing(widget.state, widget.state.lockedLocations);
+  }
+
+  void _back() => widget.nav.go(widget.from);
+
+  Future<void> _buy() async {
+    setState(() {
+      _busyMsg = S.pwConfirming(_storeName);
+      _phase = _PwPhase.buying;
+    });
+    final outcome = await widget.state.purchasePremium(_plan);
+    if (!mounted) return;
+    switch (outcome) {
+      case PurchaseOutcome.success:
+        Haptics.success();
+        setState(() => _phase = _PwPhase.success);
+      case PurchaseOutcome.canceled:
+        // Their choice, not a failure: back to the plans without a banner.
+        setState(() => _phase = _PwPhase.plans);
+      case PurchaseOutcome.failed:
+        Haptics.error();
+        setState(() => _phase = _PwPhase.error);
+    }
+  }
+
+  Future<void> _restore() async {
+    final prev = _phase;
+    setState(() {
+      _busyMsg = S.pwChecking;
+      _phase = _PwPhase.buying;
+    });
+    await widget.state.restorePurchases();
+    if (!mounted) return;
+    setState(
+        () => _phase = widget.state.premium.isOn ? _PwPhase.success : prev);
+  }
+
+  String get _trialEnds =>
+      formatPremiumDate(DateTime.now().add(const Duration(days: 7)));
+
+  /// The city of the locked row that opened this screen, if it is still
+  /// known. Nothing is invented: an id that matches nothing leaves the
+  /// headline generic.
+  String? get _city {
+    final id = widget.locId;
+    if (id == null) return null;
+    for (final l in [
+      ...widget.state.lockedLocations,
+      ..._wasLocked,
+      ...widget.state.locations,
+    ]) {
+      if (l.id == id) return l.city;
+    }
+    return null;
+  }
+
+  /// How many hideip.net locations the plan covers right now, or null while
+  /// the catalog has not answered and there is nothing true to count.
+  int? get _locationCount {
+    final locked = widget.state.lockedLocations.length;
+    if (locked > 0) return locked;
+    if (_wasLocked.isNotEmpty) return _wasLocked.length;
+    final owned = widget.state.locations.where((l) => l.premium).length;
+    return owned > 0 ? owned : null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_phase == _PwPhase.success) return _success();
+
+    return Container(
+      color: Hip.dark,
+      child: SafeArea(
+        child: Stack(children: [
+          Column(children: [
+            HipNavHead(
+              title: '',
+              onBack: _back,
+              onDark: true,
+              trailing: HipIconButton(Icons.close,
+                  onTap: _back, color: Colors.white.withValues(alpha: .6)),
+            ),
+            Expanded(
+              child: PaywallOffer(
+                yearly: widget.state.planInfo(PremiumPlan.yearly),
+                monthly: widget.state.planInfo(PremiumPlan.monthly),
+                plan: _plan,
+                onPlan: (p) => setState(() => _plan = p),
+                city: _city,
+                locationCount: _locationCount,
+                trialEnds: _trialEnds,
+                storeName: _storeName,
+                failed: _phase == _PwPhase.error,
+                storeMessage: widget.state.purchases.lastError,
+                onBuy: _buy,
+                onRestore: _restore,
+                onTerms: () => _openUrl(_termsUrl),
+                onPrivacy: () => _openUrl(_privacyUrl),
+              ),
+            ),
+          ]),
+          if (_phase == _PwPhase.buying) _buyingOverlay(),
         ]),
       ),
     );
@@ -505,7 +630,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
               textAlign: TextAlign.center,
               style: Hip.sans(650, 15, color: Colors.white)),
           const SizedBox(height: 4),
-          Text('This usually takes a moment.',
+          Text(S.pwBusySub,
               textAlign: TextAlign.center,
               style: Hip.sans(400, 13.5,
                   color: Colors.white.withValues(alpha: .55), height: 1.6)),
@@ -514,12 +639,25 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
   }
 
+  /// What the purchase actually bought: the locations that carried a padlock
+  /// a moment ago. Once provisioning has landed they are real servers on the
+  /// same endpoints, so the live ones are preferred; until then the catalog
+  /// rows stand in, with the latencies already measured on them.
+  List<Location> get _unlocked {
+    if (_wasLocked.isEmpty) return const [];
+    final ids = {for (final l in _wasLocked) l.id};
+    final live =
+        widget.state.locations.where((l) => ids.contains(l.id)).toList();
+    final shown = live.isEmpty ? _wasLocked : sortedByPing(widget.state, live);
+    return shown.take(4).toList();
+  }
+
   Widget _success() {
     final p = widget.state.premium;
     final trial = p.status == PremiumStatus.trial;
     final renewsDate =
         p.renews != null ? formatPremiumDate(p.renews!) : _trialEnds;
-    final locations = widget.state.locations.take(4).toList();
+    final locations = _unlocked;
     return Container(
       color: Hip.dark,
       child: SafeArea(
@@ -540,13 +678,14 @@ class _PaywallScreenState extends State<PaywallScreen> {
                       size: 30, color: Brand.hsl(152, 60, 58)),
                 ),
                 const SizedBox(height: 16),
-                Text("You're in.",
+                Text(S.pwDoneTitle,
                     style: Hip.sans(750, 23,
                         color: Colors.white, letterSpacing: -.64)),
                 const SizedBox(height: 6),
                 Text(
-                    '${trial ? 'Your 7-day free trial is active.' : 'Your subscription is active.'}'
-                    '${locations.isEmpty ? '' : ' Ready when you are:'}',
+                    locations.isEmpty
+                        ? (trial ? S.pwDoneTrial : S.pwDonePaid)
+                        : (trial ? S.pwDoneTrialNew : S.pwDonePaidNew),
                     textAlign: TextAlign.center,
                     style: Hip.sans(400, 13,
                         color: Colors.white.withValues(alpha: .58),
@@ -555,17 +694,15 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 for (final l in locations) _unlockRow(l),
                 const Spacer(),
                 _legal(trial
-                    ? 'First charge on |$renewsDate| '
-                        'unless you cancel before then.'
-                    : 'Renews on |$renewsDate|; cancel anytime '
-                        'in your $_storeName settings.'),
+                    ? S.pwDoneLegalTrial(renewsDate)
+                    : S.pwDoneLegalPaid(renewsDate)),
                 const SizedBox(height: 8),
               ]),
             ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(22, 12, 22, 20),
-            child: HipCta('Start browsing',
+            child: HipCta(S.pwDoneCta,
                 onTap: () => widget.nav.go(HipScreen.home)),
           ),
         ]),
@@ -575,7 +712,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
   Widget _unlockRow(Location l) {
     final ping = widget.state.pingFor(l.profile);
-    final ms = ping is PingOk ? '${ping.ms} ms' : '';
+    final ms = ping is PingOk ? S.pwPing(ping.ms) : '';
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
@@ -609,25 +746,41 @@ class _PaywallScreenState extends State<PaywallScreen> {
 }
 
 /// Settings → Premium: the subscription at a glance plus billing shortcuts.
-class PremiumManageScreen extends StatelessWidget {
+class PremiumManageScreen extends StatefulWidget {
   final AppState state;
   final HipNav nav;
   const PremiumManageScreen(
       {super.key, required this.state, required this.nav});
 
   @override
+  State<PremiumManageScreen> createState() => _PremiumManageScreenState();
+}
+
+class _PremiumManageScreenState extends State<PremiumManageScreen> {
+  bool _restoring = false;
+
+  Future<void> _restore() async {
+    if (_restoring) return;
+    setState(() => _restoring = true);
+    await widget.state.restorePurchases();
+    if (mounted) setState(() => _restoring = false);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final state = widget.state;
+    final nav = widget.nav;
     final p = state.premium;
     final info = state.planInfo(p.plan ?? PremiumPlan.yearly);
     final expired = p.status == PremiumStatus.expired;
     final statusBadge = switch (p.status) {
-      PremiumStatus.active => HipBadge.ok('Active'),
-      PremiumStatus.trial => HipBadge.blue('Free trial'),
-      _ => HipBadge('Expired', bg: Hip.line2, fg: Hip.inkSoft),
+      PremiumStatus.active => HipBadge.ok(S.pmActive),
+      PremiumStatus.trial => HipBadge.blue(S.tFreeTrial),
+      _ => HipBadge(S.pmExpired, bg: Hip.line2, fg: Hip.inkSoft),
     };
     return SafeArea(
       child: Column(children: [
-        HipNavHead(title: 'Premium', onBack: () => nav.go(HipScreen.settings)),
+        HipNavHead(title: S.tPremium, onBack: () => nav.go(HipScreen.settings)),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -640,14 +793,14 @@ class PremiumManageScreen extends StatelessWidget {
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('hideip.net Premium',
+                          Text(S.pmBrand,
                               style: Hip.sans(650, 15.5,
                                   color: Hip.ink, letterSpacing: -.15)),
                           const SizedBox(height: 2),
                           Text(
                               expired
-                                  ? 'Subscription ended; not renewing'
-                                  : '${info.name} plan',
+                                  ? S.setPremiumEnded
+                                  : S.pmPlanName(info.name),
                               style: Hip.sans(550, 12, color: Hip.muted)),
                         ]),
                   ),
@@ -655,53 +808,57 @@ class PremiumManageScreen extends StatelessWidget {
                 ]),
               ),
               if (!expired) ...[
-                const HipSectionLabel('Subscription'),
+                const HipSectionLabel(S.pmSubscription),
                 HipListGroup(children: [
                   HipListRow(
-                    title: 'Plan',
+                    title: S.pmPlan,
                     trailing: Text.rich(TextSpan(children: [
                       TextSpan(
                           text: info.price,
                           style: Hip.mono(600, 12.5, color: Hip.muted)),
                       TextSpan(
-                          text: ' per ${info.per}',
+                          text: ' ${S.pwPer(info.per)}',
                           style: Hip.sans(400, 12.5, color: Hip.muted)),
                     ])),
                   ),
                   HipListRow(
                     title: p.status == PremiumStatus.trial
-                        ? 'Trial ends'
-                        : 'Renews',
+                        ? S.pmTrialEnds
+                        : S.pmRenews,
                     trailing: Text(
                         p.renews != null ? formatPremiumDate(p.renews!) : '',
                         style: Hip.mono(600, 12.5, color: Hip.muted)),
                   ),
                 ]),
               ],
-              const HipSectionLabel('Billing'),
+              const HipSectionLabel(S.pmBilling),
               HipListGroup(children: [
                 HipListRow(
-                  title: 'Manage in $_storeName',
-                  subtitle: 'Change plan, cancel, or update payment',
+                  title: S.pmManage(_storeName),
+                  subtitle: S.pmManageSub,
                   trailing:
                       Icon(Icons.open_in_new, size: 17, color: Hip.muted2),
                   onTap: () => _openUrl(_manageUrl),
                 ),
                 HipListRow(
-                  title: 'Restore purchases',
-                  trailing:
-                      Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
-                  onTap: state.restorePurchases,
+                  title: _restoring ? S.pmChecking : S.pwRestore,
+                  trailing: _restoring
+                      ? SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Hip.muted2),
+                        )
+                      : Icon(Icons.chevron_right, size: 17, color: Hip.muted2),
+                  onTap: _restoring ? null : _restore,
                 ),
               ]),
-              HipSubnote('Billing is handled by the $_storeName;\n'
-                  'hideip.net never sees your payment details.'),
+              HipSubnote(S.pmSubnote(_storeName)),
               if (expired)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(0, 14, 0, 24),
-                  child: HipCta('Restart Premium',
-                      onTap: () =>
-                          nav.openPaywall(from: HipScreen.settings)),
+                  child: HipCta(S.pmRestart,
+                      onTap: () => nav.openPaywall(from: HipScreen.settings)),
                 ),
             ],
           ),
@@ -720,16 +877,16 @@ class TrialExpiredScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final locations = state.locations;
-    final shown = locations.take(3).toList();
-    final more = locations.length - shown.length;
+    // The paused rows are hideip.net locations, never the user's own imports:
+    // an imported server keeps working and was never part of the plan.
+    final paused = sortedByPing(state, state.lockedLocations);
     return SafeArea(
       child: Column(children: [
         HipNavHead(title: '', onBack: () => nav.go(HipScreen.home)),
         Expanded(
-          child: Padding(
+          child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(children: [
+            children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(0, 36, 0, 22),
                 child:
@@ -751,40 +908,55 @@ class TrialExpiredScreen extends StatelessWidget {
                   _ghostCube(),
                 ]),
               ),
-              Text('Your free trial has ended',
-                  style: Hip.sans(750, 23, color: Hip.ink, letterSpacing: -.58)),
+              Text(S.expTitle,
+                  textAlign: TextAlign.center,
+                  style:
+                      Hip.sans(750, 23, color: Hip.ink, letterSpacing: -.58)),
               const SizedBox(height: 9),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 290),
-                child: Text(
-                    'Nothing was charged. Your settings and imported '
-                    'connections are untouched; Premium locations are paused '
-                    "until you're back.",
-                    textAlign: TextAlign.center,
-                    style: Hip.sans(400, 13.5, color: Hip.muted, height: 1.55)),
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 290),
+                  child: Text(S.expBody,
+                      textAlign: TextAlign.center,
+                      style:
+                          Hip.sans(400, 13.5, color: Hip.muted, height: 1.55)),
+                ),
               ),
-              const SizedBox(height: 22),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  for (final l in shown) _chip(l),
-                  if (more > 0) _moreChip(more),
-                ],
-              ),
-            ]),
+              // Same rows as Locations: same bars, same padlock, same words.
+              // One visual language for Premium, because the comparison is
+              // the whole offer.
+              if (paused.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: HipSectionLabel(S.expPaused),
+                ),
+                HipListGroup(children: [
+                  for (final l in paused)
+                    LockedRow(
+                      location: l,
+                      from: LockedFrom.expired,
+                      pingMs: switch (state.pingFor(l.profile)) {
+                        PingOk(ms: final ms) => ms,
+                        _ => null,
+                      },
+                      level: state.levelFor(l.profile),
+                      advanced: state.prefs.advanced,
+                      onTap: (from, locId) => nav.openPaywall(
+                          from: HipScreen.trialExpired, locId: locId),
+                    ),
+                ]),
+              ],
+              const SizedBox(height: 12),
+            ],
           ),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(22, 14, 22, 20),
           child: Column(children: [
-            HipCta('Continue with Premium',
-                onTap: () =>
-                    nav.openPaywall(from: HipScreen.trialExpired)),
+            HipCta(S.expCta,
+                onTap: () => nav.openPaywall(from: HipScreen.trialExpired)),
             const SizedBox(height: 8),
-            HipCta('Use your own connection link',
-                quiet: true, onTap: () => nav.openImport()),
+            HipCta(S.expCtaImport, quiet: true, onTap: () => nav.openImport()),
           ]),
         ),
       ]),
@@ -801,27 +973,5 @@ class TrialExpiredScreen extends StatelessWidget {
               width: 2),
           borderRadius: BorderRadius.circular(12),
         ),
-      );
-
-  Widget _chip(Location l) => Container(
-        padding: const EdgeInsets.fromLTRB(6, 6, 12, 6),
-        decoration: BoxDecoration(
-          border: Border.all(color: Hip.line, width: 1.5),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Opacity(opacity: .55, child: HipFlag(cc: l.cc, small: true)),
-          const SizedBox(width: 7),
-          Text(l.city, style: Hip.sans(600, 12.5, color: Hip.muted)),
-        ]),
-      );
-
-  Widget _moreChip(int n) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          border: Border.all(color: Hip.line, width: 1.5),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Text('+$n', style: Hip.mono(600, 12.5, color: Hip.muted)),
       );
 }

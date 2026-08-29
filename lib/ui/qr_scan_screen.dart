@@ -3,14 +3,85 @@ import 'package:flutter_zxing/flutter_zxing.dart';
 
 import '../core/haptics.dart';
 import 'brand.dart';
+import 'strings.dart';
 
-/// Full-screen QR scanner. Pops with the first decoded string (the raw share
-/// link or subscription body), or null if the user backs out.
+/// The live camera preview that decodes QR codes, with no chrome of its own
+/// beyond the reader's torch and camera-flip buttons.
 ///
 /// Backed by [flutter_zxing] (pure ZXing via FFI). Unlike ML Kit based
 /// scanners it has no Google Play Services dependency, so it decodes on
 /// GrapheneOS and other no-GMS devices exactly as on stock Android, which
 /// matters for a privacy app whose users often run de-Googled ROMs.
+///
+/// It reports every decode it sees; whoever mounts it decides what a first
+/// code means and when to stop listening.
+class QrReader extends StatelessWidget {
+  /// Called with the trimmed contents of each decoded code.
+  final ValueChanged<String> onCode;
+
+  /// Shows the reader's own torch and camera-flip buttons. They are the
+  /// reader's because it owns the camera controller and knows whether the
+  /// device has a torch at all.
+  final bool showControls;
+
+  final AlignmentGeometry controlsAlignment;
+  final EdgeInsetsGeometry controlsPadding;
+
+  const QrReader({
+    super.key,
+    required this.onCode,
+    this.showControls = true,
+    this.controlsAlignment = Alignment.bottomLeft,
+    this.controlsPadding = const EdgeInsets.all(10),
+  });
+
+  void _onScan(Code code) {
+    final raw = code.text;
+    if (!code.isValid || raw == null || raw.trim().isEmpty) return;
+    onCode(raw.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ReaderWidget(
+      codeFormat: Format.qrCode,
+      onScan: _onScan,
+      // Privacy: never reach into the photo library; links come from the
+      // camera or paste, not the gallery.
+      showGallery: false,
+      showScannerOverlay: false,
+      showFlashlight: showControls,
+      showToggleCamera: showControls,
+      actionButtonsAlignment: controlsAlignment,
+      actionButtonsPadding: controlsPadding,
+      flashOnIcon: const Icon(
+        Icons.flashlight_on_outlined,
+        color: Colors.white,
+      ),
+      flashOffIcon: const Icon(
+        Icons.flashlight_off_outlined,
+        color: Colors.white,
+      ),
+      toggleCameraIcon: const Icon(
+        Icons.cameraswitch_outlined,
+        color: Colors.white,
+      ),
+      scanDelaySuccess: const Duration(milliseconds: 600),
+      actionButtonsBackgroundColor: Colors.black.withValues(alpha: 0.35),
+      actionButtonsBackgroundBorderRadius: BorderRadius.circular(999),
+      loading: const DecoratedBox(
+        decoration: BoxDecoration(color: Colors.black),
+        child: Center(child: CircularProgressIndicator(color: Colors.white)),
+      ),
+    );
+  }
+}
+
+/// Full-screen QR scanner. Pops with the first decoded string, or null if the
+/// user backs out.
+///
+/// The importer scans in an inline popup instead; this screen is what device
+/// linking uses, where the scan is the whole task.
 class QrScanScreen extends StatefulWidget {
   const QrScanScreen({super.key});
 
@@ -21,13 +92,11 @@ class QrScanScreen extends StatefulWidget {
 class _QrScanScreenState extends State<QrScanScreen> {
   bool _handled = false;
 
-  void _onScan(Code code) {
+  void _onCode(String raw) {
     if (_handled) return;
-    final raw = code.text;
-    if (!code.isValid || raw == null || raw.trim().isEmpty) return;
     _handled = true;
     Haptics.success();
-    Navigator.of(context).pop(raw.trim());
+    Navigator.of(context).pop(raw);
   }
 
   @override
@@ -39,37 +108,13 @@ class _QrScanScreenState extends State<QrScanScreen> {
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         elevation: 0,
-        title: const Text('Scan QR code'),
+        title: const Text(S.e7Title),
       ),
       extendBodyBehindAppBar: true,
       body: Stack(
         fit: StackFit.expand,
         children: [
-          ReaderWidget(
-            codeFormat: Format.qrCode,
-            onScan: _onScan,
-            // Privacy: never reach into the photo library; links come from
-            // the camera or paste, not the gallery.
-            showGallery: false,
-            showScannerOverlay: false,
-            // Built-in torch + front/back toggle, tinted to the brand blue.
-            showFlashlight: true,
-            showToggleCamera: true,
-            flashOnIcon: const Icon(Icons.flashlight_on_outlined,
-                color: Colors.white),
-            flashOffIcon: const Icon(Icons.flashlight_off_outlined,
-                color: Colors.white),
-            toggleCameraIcon:
-                const Icon(Icons.cameraswitch_outlined, color: Colors.white),
-            scanDelaySuccess: const Duration(milliseconds: 600),
-            actionButtonsBackgroundColor: Colors.black.withValues(alpha: 0.35),
-            loading: const DecoratedBox(
-              decoration: BoxDecoration(color: Colors.black),
-              child: Center(
-                child: CircularProgressIndicator(color: Colors.white),
-              ),
-            ),
-          ),
+          QrReader(onCode: _onCode),
           // Brand reticle drawn on top of the live preview.
           IgnorePointer(
             child: CustomPaint(
@@ -82,7 +127,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
             right: 0,
             bottom: 48,
             child: Text(
-              'Point the camera at a server QR code',
+              S.e9Hint,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.85),
