@@ -285,7 +285,9 @@ class AsciiParagraphCache {
         color: shade,
         fontFamily: fontFamily,
         fontSize: fontSize,
-        fontVariations: [ui.FontVariation('wght', fontWeight.toDouble())],
+        // The mono face ships as static weights, so the weight has to be
+        // picked as a face rather than requested as a variation axis.
+        fontWeight: ui.FontWeight.values[(fontWeight ~/ 100 - 1).clamp(0, 8)],
       ))
       ..addText(glyph);
     final paragraph = builder.build()
