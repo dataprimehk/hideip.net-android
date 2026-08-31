@@ -76,10 +76,33 @@ class IpLookup {
     return (await _fetch())?.ip;
   }
 
-  /// Server geolocation used to call a third party for every unnamed import.
-  /// It stays local/unknown until hideip.net offers a privacy-reviewed batch
-  /// endpoint or an on-device database.
-  static Future<String?> countryFor(String _) async => null;
+  /// The country an imported server sits in, for its flag and its map pin,
+  /// or null when nobody knows. This used to ask a third party, which learnt
+  /// every server a user imports; now it asks hideip.net's own endpoint,
+  /// which answers off local databases and logs nothing. The hostname is
+  /// resolved on the phone first, so only an address ever leaves it.
+  static Future<String?> countryFor(String host) async {
+    if (_shotIp.isNotEmpty) return null;
+    final base = Uri.tryParse(_endpoint);
+    if (base == null || !isAllowedIpEndpoint(base)) return null;
+    try {
+      var ip = host.trim();
+      if (InternetAddress.tryParse(ip) == null) {
+        final addrs = await InternetAddress.lookup(ip).timeout(_timeout);
+        if (addrs.isEmpty) return null;
+        ip = addrs.first.address;
+      }
+      final response = await SafeHttpFetcher().get(
+        base.replace(queryParameters: {...base.queryParameters, 'addr': ip}),
+        maxBytes: 16 * 1024,
+        timeout: _timeout,
+      );
+      if (response.statusCode != 200) return null;
+      return parseIpLookupBody(response.body)?.cc;
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Future<IpGeo?> locate() async {
     if (_shotIp.isNotEmpty) {

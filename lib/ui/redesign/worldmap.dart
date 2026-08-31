@@ -750,7 +750,12 @@ class _WorldMapState extends State<WorldMap> with TickerProviderStateMixin {
             child: Align(
               alignment: Alignment.centerLeft,
               child: VoteHint(
-                invite: !_votes.hintDismissed,
+                // The design never leaves the map without a hint: once the
+                // invite is dismissed the quota line takes its place, so
+                // while the quota is still unknown the invite stays.
+                invite: !_votes.hintDismissed ||
+                    _votes.votesLeft == null ||
+                    _votes.votesMax == null,
                 votesLeft: _votes.votesLeft,
                 votesMax: _votes.votesMax,
               ),
