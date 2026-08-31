@@ -166,10 +166,18 @@ class Location {
       index: index,
       city: display,
       country: p.server,
-      cc: '··',
+      cc: unknownCc,
       provider: provider,
     );
   }
+
+  /// The placeholder `cc` of a server nothing could place. Its `country` is
+  /// then the raw host, which is fine under a flag slot and wrong after a
+  /// comma.
+  static const String unknownCc = '··';
+
+  /// Whether a real country stands behind [country] and [cc].
+  bool get placed => cc != unknownCc;
 }
 
 class _City {

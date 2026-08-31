@@ -76,6 +76,15 @@ abstract final class S {
       'The system asks for permission to add a VPN configuration. That is what '
       'routes this device through the selected server; hideip.net cannot read '
       'what passes through it.';
+  // Disconnect while the system holds an Always-on profile the app did not
+  // opt into: traffic stays blocked until the user resolves it in the OS.
+  static const alwaysOnTitle = 'Always-on VPN is on';
+  static const alwaysOnBody =
+      'Android keeps hideip.net\'s Always-on VPN active, so traffic stays '
+      'blocked while you are disconnected. Turn it off in Android settings, '
+      'or turn on Always-on in Settings to reconnect automatically.';
+  static const alwaysOnOpen = 'Open Android settings';
+  static const alwaysOnDismiss = 'Dismiss';
 
   // B14, the system VPN permission was declined.
   static const b14Line =

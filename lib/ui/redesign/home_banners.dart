@@ -439,3 +439,31 @@ class VpnPrimerSheet extends StatelessWidget {
     );
   }
 }
+
+/// Disconnect under a system Always-on profile the app never opted into:
+/// Android keeps holding traffic, and only the user can change that.
+/// [onOpenSettings] takes them to the OS page; the sheet pops itself first.
+class AlwaysOnSheet extends StatelessWidget {
+  final VoidCallback onOpenSettings;
+  const AlwaysOnSheet({super.key, required this.onOpenSettings});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const HipSheetTitle(S.alwaysOnTitle),
+        const HipSheetBody(S.alwaysOnBody),
+        HipSheetActions(children: [
+          HipCta(S.alwaysOnOpen, connect: true, onTap: () {
+            Navigator.of(context).pop();
+            onOpenSettings();
+          }),
+          HipCta(S.alwaysOnDismiss,
+              quiet: true, onTap: () => Navigator.of(context).pop()),
+        ]),
+      ],
+    );
+  }
+}

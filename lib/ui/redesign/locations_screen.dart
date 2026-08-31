@@ -445,7 +445,12 @@ class LocationsBody extends StatelessWidget {
                 // The brand header and the tint are relational: they exist
                 // only while there is something to tell apart.
                 if (mix != Mix.hip) const _PremiumSectionHead(),
-                _Group(tinted: mix == Mix.mixed, children: managedRows),
+                // Locked rows come from the public catalog; while there are
+                // none (no mirror reachable, or a build without the release
+                // key) the strip alone carries the offer. An empty box would
+                // only look broken.
+                if (managedRows.isNotEmpty)
+                  _Group(tinted: mix == Mix.mixed, children: managedRows),
                 if (!subscribed) _PremiumStrip(onTap: onSeePlans),
               ],
               if (mix != Mix.hip) ...[

@@ -878,7 +878,7 @@ class AppState extends ChangeNotifier {
       if (p.cc != null) continue;
       final idx = _profiles.indexOf(p);
       if (idx < 0) continue;
-      if (Location.derive(p, idx).cc != '··') continue;
+      if (Location.derive(p, idx).placed) continue;
       final cc = await IpLookup.countryFor(p.server);
       if (cc == null) continue;
       // The list may have shifted while the lookup was in flight.

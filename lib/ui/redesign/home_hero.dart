@@ -193,53 +193,9 @@ class _HomeHeroScreenState extends State<HomeHeroScreen>
   void _maybeWarnAlwaysOn() {
     final state = widget.state;
     if (!mounted || !state.systemAlwaysOn || state.prefs.alwaysOn) return;
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Hip.card,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(Hip.radius)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Always-on VPN is on',
-                  style: Hip.sans(650, 17, color: Hip.ink)),
-              const SizedBox(height: 10),
-              Text(
-                'Android keeps hideip.net\'s Always-on VPN active, so traffic '
-                'stays blocked while you are disconnected. Turn it off in '
-                'Android settings, or turn on Always-on in Settings to '
-                'reconnect automatically.',
-                style: Hip.sans(550, 14, color: Hip.inkSoft, height: 1.45),
-              ),
-              const SizedBox(height: 18),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: Text('Dismiss',
-                        style: Hip.sans(650, 14, color: Hip.muted)),
-                  ),
-                  const SizedBox(width: 8),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      VpnController.openVpnSettings();
-                    },
-                    child: Text('Open Android settings',
-                        style: Hip.sans(650, 14, color: Hip.blue)),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    showHipSheet<void>(context, children: [
+      AlwaysOnSheet(onOpenSettings: VpnController.openVpnSettings),
+    ]);
   }
 
   Future<void> _selectFromMap(Location loc) async {
@@ -292,7 +248,10 @@ class _HomeHeroScreenState extends State<HomeHeroScreen>
     final state = widget.state;
     if (connected) {
       final loc = state.activeLocation;
-      return loc == null ? '' : S.ctxPlace(loc.city, loc.country);
+      if (loc == null) return '';
+      // A server nobody could place carries its host as "country"; the name
+      // alone reads better than "name, 203.0.113.9".
+      return loc.placed ? S.ctxPlace(loc.city, loc.country) : loc.city;
     }
     final geo = state.userGeo;
     final city = geo?.city;
