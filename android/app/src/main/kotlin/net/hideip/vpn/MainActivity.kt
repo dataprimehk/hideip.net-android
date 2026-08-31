@@ -1,19 +1,16 @@
 package net.hideip.vpn
 
-import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PersistableBundle
 import android.provider.Settings
-import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -33,7 +30,6 @@ class MainActivity : FlutterActivity() {
 
     private val channelName = "net.hideip.vpn/control"
     private val reqVpnConsent = 7001
-    private val reqPostNotifications = 7002
     private var pendingResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -173,12 +169,11 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handlePrepare(result: MethodChannel.Result) {
-        // Android 13+ requires a runtime grant for the ongoing VPN notification.
-        // It is a soft dependency: if the user declines, the tunnel still runs,
-        // only the persistent "Connected" notification is suppressed by the OS.
-        // So we ask fire-and-forget and never block the connection on its outcome.
-        ensureNotificationPermission()
-
+        // Only the VPN consent is raised here. The notification permission is
+        // asked from Dart, in its own moment (Settings, or after the first
+        // vote); asking for it in the same breath stacks two system dialogs,
+        // and the consent result is then held back until the second one is
+        // answered, long enough for the connect timers to call it a failure.
         val intent = VpnService.prepare(this)
         if (intent != null) {
             // Need user consent; remember the result to resolve after the dialog.
@@ -193,18 +188,6 @@ class MainActivity : FlutterActivity() {
         private const val CLIP_MARKER = "net.hideip.vpn.CLIP_MARKER"
     }
 
-    private fun ensureNotificationPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val granted = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) {
-            requestPermissions(
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                reqPostNotifications,
-            )
-        }
-    }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)

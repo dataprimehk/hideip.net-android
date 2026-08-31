@@ -989,7 +989,6 @@ class AppState extends ChangeNotifier {
     _connSlow = false;
     _showConnectFailed = false;
     final generation = ++_connectGeneration;
-    _startConnectTimers(generation);
     notifyListeners();
 
     try {
@@ -1017,6 +1016,12 @@ class AppState extends ChangeNotifier {
       }
       _vpnPerm = VpnPerm.granted;
       _vpnPrepared = true;
+      // A cancel while the consent sheet was up already ended this attempt;
+      // the answer is still recorded above, only the tunnel is not started.
+      if (generation != _connectGeneration) return;
+      // The clock starts once consent is out of the way. The time someone
+      // spends reading a system dialog is not the tunnel's to answer for.
+      _startConnectTimers(generation);
       // Speed mode gets first refusal; anything unclear falls through to the
       // stealth profile below, which is the path that always works.
       final decision = SpeedModeDecision.decide(

@@ -22,6 +22,8 @@ import '../../state/app_state.dart';
 import '../brand.dart';
 import '../strings.dart';
 import 'hip.dart';
+import 'hip_sheet.dart';
+import 'home_banners.dart';
 import 'qr_popup.dart';
 import 'shell.dart';
 
@@ -312,9 +314,21 @@ class _ImportScreenState extends State<ImportScreen> {
 
   Future<void> _commit({required bool connect}) async {
     await widget.state.addProfiles(_pending, select: true);
-    widget.state.showToast(S.e6Added(_preview!.city));
+    final city = _preview!.city;
+    var go = connect;
+    if (go && widget.state.needsVpnPrimer) {
+      // B13 reads the same here as on Home: the one system permission is
+      // explained before the OS asks, whichever button led to the first
+      // Connect. Offered once per install, whatever the answer.
+      if (!mounted) return;
+      final answer = await showHipSheet<bool>(context,
+          children: const [VpnPrimerSheet()]);
+      await widget.state.markVpnPrimerSeen();
+      go = answer == true;
+    }
+    widget.state.showToast(S.e6Added(city));
     widget.nav.go(HipScreen.home);
-    if (connect) {
+    if (go) {
       await Future.delayed(const Duration(milliseconds: 250));
       await widget.state.connect();
     }
