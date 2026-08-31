@@ -8,6 +8,8 @@ import UIKit
 /// Channel: net.hideip.vpn/control
 ///   prepare() -> saves the VPN profile; the first save shows the system
 ///                consent dialog. Returns true when allowed.
+///   isPrepared() -> whether an enabled profile is already saved. Never
+///                saves, so it never raises the consent dialog.
 ///   start(config, label) -> starts the PacketTunnel extension with the
 ///                sing-box config JSON
 ///   stop() -> stops the tunnel
@@ -29,6 +31,7 @@ final class VpnChannel: NSObject {
     private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "prepare": prepare(result)
+        case "isPrepared": isPrepared(result)
         case "start": start(call, result)
         case "stop": stop(result)
         case "status": status(result)
@@ -94,6 +97,19 @@ final class VpnChannel: NSObject {
                     self.answer(result, true)
                 }
             }
+        }
+    }
+
+    // MARK: - isPrepared
+
+    /// Reads the existing consent without asking for it, the counterpart of
+    /// `VpnService.prepare(context) == null` on Android, so Dart can tell
+    /// "never asked" apart from "refused". A profile another VPN app disabled
+    /// counts as not prepared: prepare() would have to save again, and that
+    /// save is what shows the system sheet.
+    private func isPrepared(_ result: @escaping FlutterResult) {
+        loadManager { manager in
+            self.answer(result, manager?.isEnabled == true)
         }
     }
 
