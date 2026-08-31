@@ -17,13 +17,19 @@ typedef QrReaderBuilder =
 
 /// The real preview: [QrReader] with its torch and camera-flip buttons sitting
 /// on the bottom edge of the popup.
+///
+/// The panel's bottom edge is the screen's bottom edge, so the buttons carry
+/// the safe-area inset themselves. [_scanner] lifts the caption by the same
+/// inset, which is what keeps the two apart on a device with a home indicator.
 Widget buildQrReader(
   BuildContext context, {
   required ValueChanged<String> onCode,
 }) => QrReader(
   onCode: onCode,
   controlsAlignment: Alignment.bottomCenter,
-  controlsPadding: const EdgeInsets.only(bottom: 18),
+  controlsPadding: QrOverlay.controlsPadding(
+    MediaQuery.paddingOf(context).bottom,
+  ),
 );
 
 /// The QR scanner as an inline popup over the import screen, in three states:
@@ -220,6 +226,10 @@ class _QrPopupState extends State<QrPopup>
   // --- the scanner -------------------------------------------------------------
 
   Widget _scanner() {
+    // What the reader's controls stand on, so the caption can stand above
+    // them. On iOS this is the home indicator's 34px; on Android it is
+    // usually nothing, which is why only iOS ever showed them collide.
+    final inset = MediaQuery.paddingOf(context).bottom;
     // Absorbs its own taps: only the scrim above the panel closes the popup.
     return GestureDetector(
       onTap: () {},
@@ -281,7 +291,7 @@ class _QrPopupState extends State<QrPopup>
                     Positioned(
                       left: 20,
                       right: 20,
-                      bottom: 86,
+                      bottom: QrOverlay.captionBottom(inset),
                       child: Text(
                         S.e9Hint,
                         textAlign: TextAlign.center,
