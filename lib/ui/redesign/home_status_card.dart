@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -39,9 +40,12 @@ enum StatusTone {
 ///
 ///  * `backdrop-filter: blur(7px) saturate(1.45)` over the ASCII field and
 ///    the tone glow behind it,
-///  * a translucent vertical fill, dark enough to keep the text legible,
-///  * a 1px rim running from 42% white at the top edge to 22% at the bottom,
-///    which is what the eye reads as lit glass,
+///  * a white gradient across the WHOLE card (the `border-box` background):
+///    42% at the top-left corner, fading to almost nothing by the middle and
+///    back up to 22% at the bottom-right. It is what lights the glass,
+///  * a translucent dark vertical fill over it, inset by the 1px border (the
+///    `padding-box` background), dark enough to keep the text legible. The
+///    ring of white left uncovered around it is the rim,
 ///  * three inset shadows: a white line under the top edge, a fainter one
 ///    over the bottom edge, and a 1px ring in the tone colour,
 ///  * two outer shadows: a wide glow in the tone colour and a short dark drop.
@@ -159,27 +163,13 @@ class _HomeStatusCardState extends State<HomeStatusCard>
           // backdrop-filter: blur(7px) saturate(1.45)
           filter: _glassBackdrop,
           child: CustomPaint(
-            // The rim, the inset shadows and the ::after sheen, all of which
-            // sit above the fill.
+            // The two background layers of `.statcard`.
+            painter: const _StatCardFill(),
+            // The inset shadows and the ::after sheen, which sit above them.
             foregroundPainter: _StatCardGlass(sc),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(Hip.glassRadius),
-                // background: linear-gradient(hsl(222 18% 15% / .3),
-                //                             hsl(222 22% 9% / .46)) padding-box
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Brand.hsl(222, 18, 15, .30),
-                    Brand.hsl(222, 22, 9, .46),
-                  ],
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(15, 14, 15, 14),
-                child: _row(sc),
-              ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(15, 14, 15, 14),
+              child: _row(sc),
             ),
           ),
         ),
@@ -374,8 +364,84 @@ class _StatCardShadows extends CustomPainter {
   bool shouldRepaint(_StatCardShadows old) => old.tone != tone;
 }
 
-/// Everything painted over the fill of `.statcard`: the three inset shadows,
-/// the gradient rim, and the `::after` sheen.
+/// The `background` of `.statcard`, two layers painted bottom-up:
+///
+/// ```css
+/// background:
+///   linear-gradient(hsl(222 18% 15% / .3), hsl(222 22% 9% / .46)) padding-box,
+///   linear-gradient(165deg, hsl(0 0% 100% / .42), hsl(0 0% 100% / .06) 42%,
+///                   hsl(0 0% 100% / .03) 70%, hsl(0 0% 100% / .22)) border-box;
+/// border: 1px solid transparent;
+/// ```
+///
+/// The second layer covers the whole card and the first only the padding
+/// box, and since the first is translucent the white shows through it
+/// everywhere, not just in the 1px ring the transparent border leaves
+/// uncovered. That ring is the rim; the rest is what makes the glass look
+/// lit from the top-left rather than merely tinted.
+class _StatCardFill extends CustomPainter {
+  const _StatCardFill();
+
+  static const _white = Colors.white;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final outer =
+        RRect.fromRectAndRadius(rect, const Radius.circular(Hip.glassRadius));
+    canvas.drawRRect(
+      outer,
+      Paint()
+        ..shader = _cssLinearGradient(rect, 165, [
+          _white.withValues(alpha: .42),
+          _white.withValues(alpha: .06),
+          _white.withValues(alpha: .03),
+          _white.withValues(alpha: .22),
+        ], const [0, .42, .70, 1]),
+    );
+    // The padding box: one pixel in on every side, its corners one pixel
+    // tighter, as CSS rounds the inner edge of a border.
+    final inner = rect.deflate(1);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          inner, const Radius.circular(Hip.glassRadius - 1)),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          inner.topCenter,
+          inner.bottomCenter,
+          [Brand.hsl(222, 18, 15, .30), Brand.hsl(222, 22, 9, .46)],
+        ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_StatCardFill old) => false;
+}
+
+/// A CSS `linear-gradient(<angle>, ...)` as a shader over [rect].
+///
+/// CSS runs the gradient line through the centre of the box at [angleDeg]
+/// (0 points up, 90 right) and makes it just long enough for the 0% and 100%
+/// stops to touch the two corners the line points at, which is
+/// `w·|sin θ| + h·|cos θ|`. Flutter's alignment-based gradients scale the
+/// endpoints per axis instead, so the same numbers land in different places.
+Shader _cssLinearGradient(
+    Rect rect, double angleDeg, List<Color> colors, List<double> stops) {
+  final theta = angleDeg * math.pi / 180;
+  final dir = Offset(math.sin(theta), -math.cos(theta));
+  final half =
+      (rect.width * dir.dx.abs() + rect.height * dir.dy.abs()) / 2;
+  final centre = rect.center;
+  return ui.Gradient.linear(
+    centre - dir * half,
+    centre + dir * half,
+    colors,
+    stops,
+  );
+}
+
+/// Everything painted over the fill of `.statcard`: the three inset shadows
+/// and the `::after` sheen.
 class _StatCardGlass extends CustomPainter {
   final Color tone;
   const _StatCardGlass(this.tone);
@@ -385,8 +451,11 @@ class _StatCardGlass extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
-    final rrect =
-        RRect.fromRectAndRadius(rect, const Radius.circular(Hip.glassRadius));
+    // Inset shadows are drawn inside the padding box, so they start one
+    // pixel in, just inside the rim.
+    final inner = rect.deflate(1);
+    final rrect = RRect.fromRectAndRadius(
+        inner, const Radius.circular(Hip.glassRadius - 1));
 
     // box-shadow: 0 0 0 1px color-mix(in oklab, var(--sc) 22%, transparent)
     // inset. A stroke on the rect deflated by half the stroke width lands
@@ -401,31 +470,10 @@ class _StatCardGlass extends CustomPainter {
 
     // The inset highlights, in CSS order (the last declared paints first):
     // 0 -1px 1px hsl(0 0% 100% / .04) inset
-    _insetEdge(canvas, rrect, rect, _white.withValues(alpha: .04), top: false);
+    _insetEdge(
+        canvas, rrect, inner, _white.withValues(alpha: .04), top: false);
     // 0 1px 1px hsl(0 0% 100% / .1) inset
-    _insetEdge(canvas, rrect, rect, _white.withValues(alpha: .10), top: true);
-
-    // border-box: linear-gradient(165deg, hsl(0 0% 100% / .42),
-    //   hsl(0 0% 100% / .06) 42%, hsl(0 0% 100% / .03) 70%,
-    //   hsl(0 0% 100% / .22)). 165deg runs down and slightly to the right, so
-    // the bright end is the top edge and the .22 tail is the bottom one.
-    canvas.drawRRect(
-      rrect.deflate(.5),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..shader = LinearGradient(
-          begin: const Alignment(-.2588, -.9659),
-          end: const Alignment(.2588, .9659),
-          colors: [
-            _white.withValues(alpha: .42),
-            _white.withValues(alpha: .06),
-            _white.withValues(alpha: .03),
-            _white.withValues(alpha: .22),
-          ],
-          stops: const [0, .42, .70, 1],
-        ).createShader(rect),
-    );
+    _insetEdge(canvas, rrect, inner, _white.withValues(alpha: .10), top: true);
 
     // ::after, two very wide radial sheens clipped to a 21px radius.
     canvas.save();
