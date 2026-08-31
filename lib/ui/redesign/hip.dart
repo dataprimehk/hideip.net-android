@@ -65,6 +65,17 @@ class Hip {
 
   static const double radius = 18;
 
+  // --- glass (app.css `.statcard`, the card on the dark hero panel) --------
+
+  /// The card's own corner radius, and the slightly tighter one its `::after`
+  /// sheen is clipped to.
+  static const double glassRadius = 22;
+  static const double glassSheenRadius = 21;
+
+  /// `backdrop-filter: blur(7px)`. A CSS blur radius is about twice the
+  /// Gaussian sigma, so 7px lands on 3.5.
+  static const double glassBlurSigma = 3.5;
+
   /// The named type scale from app.css (lines 795 to 796). It maps onto
   /// Dynamic Type on iOS and the Material scale on Android; anything not on
   /// this list stays an ad hoc value at its call site.

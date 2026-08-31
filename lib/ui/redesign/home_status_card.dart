@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -31,6 +33,18 @@ enum StatusTone {
 ///
 /// The card is deliberately NOT a button. Only the copy icon reacts to a tap,
 /// so nobody discovers by accident that the hero opens something.
+///
+/// It is real glass rather than a flat panel, and the depth comes from five
+/// layers that all sit in `.statcard`:
+///
+///  * `backdrop-filter: blur(7px) saturate(1.45)` over the ASCII field and
+///    the tone glow behind it,
+///  * a translucent vertical fill, dark enough to keep the text legible,
+///  * a 1px rim running from 42% white at the top edge to 22% at the bottom,
+///    which is what the eye reads as lit glass,
+///  * three inset shadows: a white line under the top edge, a fainter one
+///    over the bottom edge, and a 1px ring in the tone colour,
+///  * two outer shadows: a wide glow in the tone colour and a short dark drop.
 class HomeStatusCard extends StatefulWidget {
   final StatusTone tone;
 
@@ -123,149 +137,381 @@ class _HomeStatusCardState extends State<HomeStatusCard>
 
   @override
   Widget build(BuildContext context) {
-    final sc = _sc;
-    final ip = widget.ip;
-    final white = Colors.white;
-    return AnimatedContainer(
+    // `transition: box-shadow .9s ease` on the card, and the same duration on
+    // the icon and the status word. One tween drives every tone-coloured
+    // layer, so the glow, the ring and the label cannot disagree mid-change.
+    return TweenAnimationBuilder<Color?>(
+      tween: ColorTween(end: _sc),
       duration: Hip.dur(const Duration(milliseconds: 900)),
       curve: Curves.easeOut,
-      padding: const EdgeInsets.fromLTRB(15, 14, 15, 14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Brand.hsl(222, 18, 15, .30),
-            Brand.hsl(222, 22, 9, .46),
-          ],
-        ),
-        border: Border.all(color: white.withValues(alpha: .16)),
-        boxShadow: [
-          BoxShadow(
-            color: sc.withValues(alpha: .30),
-            blurRadius: 30,
-            spreadRadius: -12,
-            offset: const Offset(0, 12),
-          ),
-          BoxShadow(
-            color: Brand.hsl(222, 40, 4, .5),
-            blurRadius: 10,
-            spreadRadius: -4,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Row(children: [
-        // --- tone icon ----------------------------------------------------
-        AnimatedContainer(
-          duration: Hip.dur(const Duration(milliseconds: 900)),
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: sc.withValues(alpha: .14),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: sc.withValues(alpha: .26)),
-          ),
-          child: Center(
-            child: RotationTransition(
-              turns: _spin,
-              child: Icon(_icon, size: 20, color: sc),
-            ),
-          ),
-        ),
-        const SizedBox(width: 13),
-
-        // --- status, address, context ---------------------------------------
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                _ToneDot(color: sc, fast: widget.tone == StatusTone.busy),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    widget.status.toUpperCase(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Hip.sans(750, 10.5,
-                        color: sc, letterSpacing: .95, height: 1.1),
-                  ),
-                ),
-              ]),
-              if (ip != null) ...[
-                const SizedBox(height: 2.5),
-                AnimatedOpacity(
-                  duration: Hip.dur(const Duration(milliseconds: 300)),
-                  opacity: widget.tone == StatusTone.busy ? .55 : 1,
-                  child: Text(
-                    ip,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Hip.mono(650, 18,
-                        color: white, letterSpacing: .27, height: 1.15),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 2.5),
-              Text(
-                widget.context,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Hip.sans(400, 11.5,
-                    color: white.withValues(alpha: .5), height: 1.2),
-              ),
-              if (widget.slowLine != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  widget.slowLine!,
-                  style: Hip.sans(400, 12,
-                      color: white.withValues(alpha: .66), height: 1.4),
-                ),
-              ],
-            ],
-          ),
-        ),
-
-        // --- copy -----------------------------------------------------------
-        if (ip != null) ...[
-          const SizedBox(width: 8),
-          Semantics(
-            button: true,
-            label: _copied ? S.homeCopiedIp : S.homeCopyIp,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _copy,
-              child: SizedBox(
-                width: 44,
-                height: 44,
-                child: Center(
-                  child: Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: white.withValues(alpha: .05),
-                      borderRadius: BorderRadius.circular(11),
-                      border: Border.all(color: white.withValues(alpha: .08)),
-                    ),
-                    child: Icon(
-                      _copied ? Icons.check : Icons.copy_outlined,
-                      size: 15,
-                      color: _copied
-                          ? Brand.hsl(152, 60, 60)
-                          : white.withValues(alpha: .45),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ]),
+      builder: (context, tone, _) => _card(tone ?? _sc),
     );
   }
+
+  Widget _card(Color sc) {
+    return CustomPaint(
+      // The outer half of the box-shadow. It has to be painted outside the
+      // clip below, or the clip would eat it.
+      painter: _StatCardShadows(sc),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(Hip.glassRadius),
+        child: BackdropFilter(
+          // backdrop-filter: blur(7px) saturate(1.45)
+          filter: _glassBackdrop,
+          child: CustomPaint(
+            // The rim, the inset shadows and the ::after sheen, all of which
+            // sit above the fill.
+            foregroundPainter: _StatCardGlass(sc),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(Hip.glassRadius),
+                // background: linear-gradient(hsl(222 18% 15% / .3),
+                //                             hsl(222 22% 9% / .46)) padding-box
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Brand.hsl(222, 18, 15, .30),
+                    Brand.hsl(222, 22, 9, .46),
+                  ],
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(15, 14, 15, 14),
+                child: _row(sc),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _row(Color sc) {
+    final ip = widget.ip;
+    const white = Colors.white;
+    return Row(children: [
+      // --- tone icon --------------------------------------------------------
+      Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          // background-color: color-mix(in oklab, var(--sc) 14%, transparent)
+          color: sc.withValues(alpha: .14),
+          borderRadius: BorderRadius.circular(14),
+          // box-shadow: 0 0 0 1px color-mix(--sc 26%, transparent) inset
+          border: Border.all(color: sc.withValues(alpha: .26)),
+        ),
+        child: Center(
+          child: RotationTransition(
+            turns: _spin,
+            child: Icon(_icon, size: 20, color: sc),
+          ),
+        ),
+      ),
+      const SizedBox(width: 13),
+
+      // --- status, address, context -----------------------------------------
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              _ToneDot(color: sc, fast: widget.tone == StatusTone.busy),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  widget.status.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Hip.sans(750, 10.5,
+                      color: sc, letterSpacing: .95, height: 1.1),
+                ),
+              ),
+            ]),
+            if (ip != null) ...[
+              const SizedBox(height: 2.5),
+              AnimatedOpacity(
+                duration: Hip.dur(const Duration(milliseconds: 300)),
+                opacity: widget.tone == StatusTone.busy ? .55 : 1,
+                child: Text(
+                  ip,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Hip.mono(650, 18,
+                      color: white, letterSpacing: .27, height: 1.15),
+                ),
+              ),
+            ],
+            const SizedBox(height: 2.5),
+            Text(
+              widget.context,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Hip.sans(400, 11.5,
+                  color: white.withValues(alpha: .5), height: 1.2),
+            ),
+            if (widget.slowLine != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                widget.slowLine!,
+                style: Hip.sans(400, 12,
+                    color: white.withValues(alpha: .66), height: 1.4),
+              ),
+            ],
+          ],
+        ),
+      ),
+
+      // --- copy -------------------------------------------------------------
+      if (ip != null) ...[
+        const SizedBox(width: 8),
+        Semantics(
+          button: true,
+          label: _copied ? S.homeCopiedIp : S.homeCopyIp,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _copy,
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Center(
+                child: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    // background: hsl(0 0% 100% / .05)
+                    color: white.withValues(alpha: .05),
+                    borderRadius: BorderRadius.circular(11),
+                    // box-shadow: 0 0 0 1px hsl(0 0% 100% / .08) inset
+                    border: Border.all(color: white.withValues(alpha: .08)),
+                  ),
+                  child: Icon(
+                    _copied ? Icons.check : Icons.copy_outlined,
+                    size: 15,
+                    color: _copied
+                        ? Brand.hsl(152, 60, 60)
+                        : white.withValues(alpha: .45),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ]);
+  }
+}
+
+/// `backdrop-filter: blur(7px) saturate(1.45)` on `.statcard`.
+///
+/// A CSS blur radius is about twice the Gaussian sigma, so 7px is sigma 3.5.
+/// The saturation is the CSS filter matrix with the sRGB luminance weights
+/// (.213 / .715 / .072), and it is what keeps the tone glow behind the glass
+/// a colour rather than a grey smudge. `compose` runs the inner filter first,
+/// which is the CSS order: blur, then saturate.
+final ui.ImageFilter _glassBackdrop = ui.ImageFilter.compose(
+  outer: const ColorFilter.matrix(_saturate145),
+  inner: ui.ImageFilter.blur(
+      sigmaX: Hip.glassBlurSigma, sigmaY: Hip.glassBlurSigma),
+);
+
+/// The 4x5 colour matrix for `saturate(1.45)`.
+const List<double> _saturate145 = <double>[
+  1.35415, -0.32175, -0.03240, 0, 0, //
+  -0.09585, 1.12825, -0.03240, 0, 0, //
+  -0.09585, -0.32175, 1.41760, 0, 0, //
+  0, 0, 0, 1, 0, //
+];
+
+/// The two outer shadows of `.statcard`:
+///
+/// ```css
+/// 0 12px 30px -12px color-mix(in oklab, var(--sc) 42%, transparent),
+/// 0  3px 10px  -4px hsl(222 40% 4% / .5)
+/// ```
+///
+/// CSS knocks the border box out of an outer shadow, and here it has to be
+/// knocked out too. The card is translucent glass: a shadow left underneath
+/// would tint the fill from below and then be smeared straight back into it
+/// by the backdrop blur, which is the muddy look the design avoids.
+class _StatCardShadows extends CustomPainter {
+  final Color tone;
+  const _StatCardShadows(this.tone);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rrect = RRect.fromRectAndRadius(
+        Offset.zero & size, const Radius.circular(Hip.glassRadius));
+    // Everything outside the card, with room for the widest blur (sigma 15).
+    final outside = Path.combine(
+      PathOperation.difference,
+      Path()
+        ..addRect(Rect.fromLTRB(-60, -60, size.width + 60, size.height + 60)),
+      Path()..addRRect(rrect),
+    );
+    canvas.save();
+    canvas.clipPath(outside);
+    // A CSS blur radius is about twice the Gaussian sigma, and a spread
+    // shrinks the shadow's own rounded rect, corner radii included.
+    canvas.drawRRect(
+      rrect.shift(const Offset(0, 12)).deflate(12),
+      Paint()
+        ..color = tone.withValues(alpha: .42)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15),
+    );
+    canvas.drawRRect(
+      rrect.shift(const Offset(0, 3)).deflate(4),
+      Paint()
+        ..color = Brand.hsl(222, 40, 4, .5)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_StatCardShadows old) => old.tone != tone;
+}
+
+/// Everything painted over the fill of `.statcard`: the three inset shadows,
+/// the gradient rim, and the `::after` sheen.
+class _StatCardGlass extends CustomPainter {
+  final Color tone;
+  const _StatCardGlass(this.tone);
+
+  static const _white = Colors.white;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final rrect =
+        RRect.fromRectAndRadius(rect, const Radius.circular(Hip.glassRadius));
+
+    // box-shadow: 0 0 0 1px color-mix(in oklab, var(--sc) 22%, transparent)
+    // inset. A stroke on the rect deflated by half the stroke width lands
+    // exactly one pixel inside the edge.
+    canvas.drawRRect(
+      rrect.deflate(.5),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = tone.withValues(alpha: .22),
+    );
+
+    // The inset highlights, in CSS order (the last declared paints first):
+    // 0 -1px 1px hsl(0 0% 100% / .04) inset
+    _insetEdge(canvas, rrect, rect, _white.withValues(alpha: .04), top: false);
+    // 0 1px 1px hsl(0 0% 100% / .1) inset
+    _insetEdge(canvas, rrect, rect, _white.withValues(alpha: .10), top: true);
+
+    // border-box: linear-gradient(165deg, hsl(0 0% 100% / .42),
+    //   hsl(0 0% 100% / .06) 42%, hsl(0 0% 100% / .03) 70%,
+    //   hsl(0 0% 100% / .22)). 165deg runs down and slightly to the right, so
+    // the bright end is the top edge and the .22 tail is the bottom one.
+    canvas.drawRRect(
+      rrect.deflate(.5),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..shader = LinearGradient(
+          begin: const Alignment(-.2588, -.9659),
+          end: const Alignment(.2588, .9659),
+          colors: [
+            _white.withValues(alpha: .42),
+            _white.withValues(alpha: .06),
+            _white.withValues(alpha: .03),
+            _white.withValues(alpha: .22),
+          ],
+          stops: const [0, .42, .70, 1],
+        ).createShader(rect),
+    );
+
+    // ::after, two very wide radial sheens clipped to a 21px radius.
+    canvas.save();
+    canvas.clipRRect(RRect.fromRectAndRadius(
+        rect, const Radius.circular(Hip.glassSheenRadius)));
+    // radial-gradient(130% 100% at 20% -14%, hsl(0 0% 100% / .08), transparent 46%)
+    _sheen(canvas, size,
+        cx: .20,
+        cy: -.14,
+        rx: 1.30,
+        ry: 1.00,
+        edge: .46,
+        color: _white.withValues(alpha: .08));
+    // radial-gradient(90% 60% at 85% 115%, hsl(0 0% 100% / .04), transparent 55%)
+    _sheen(canvas, size,
+        cx: .85,
+        cy: 1.15,
+        rx: .90,
+        ry: .60,
+        edge: .55,
+        color: _white.withValues(alpha: .04));
+    canvas.restore();
+  }
+
+  /// One inset edge highlight: a hairline hugging the inside of the top (or
+  /// the bottom) edge, corners included, gone within three pixels. The stroke
+  /// is centred on the edge and clipped to the card, so half of its two
+  /// pixels survive, which is the 1px offset plus 1px blur of the CSS shadow.
+  static void _insetEdge(Canvas canvas, RRect rrect, Rect rect, Color color,
+      {required bool top}) {
+    const band = 3.0;
+    canvas.save();
+    canvas.clipRRect(rrect);
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, .5)
+        ..shader = ui.Gradient.linear(
+          top ? rect.topCenter : rect.bottomCenter,
+          top
+              ? rect.topCenter + const Offset(0, band)
+              : rect.bottomCenter - const Offset(0, band),
+          [color, color.withValues(alpha: 0)],
+        ),
+    );
+    canvas.restore();
+  }
+
+  /// A CSS elliptical radial gradient. [rx] and [ry] are fractions of the
+  /// card's width and height, [cx] and [cy] place the centre the same way,
+  /// and [edge] is the stop at which the colour reaches transparent.
+  /// Flutter's radial gradients are round, so the ellipse comes from
+  /// squashing the shader's own matrix about that centre.
+  static void _sheen(Canvas canvas, Size size,
+      {required double cx,
+      required double cy,
+      required double rx,
+      required double ry,
+      required double edge,
+      required Color color}) {
+    final center = Offset(cx * size.width, cy * size.height);
+    final radius = rx * size.width;
+    if (radius <= 0) return;
+    final squash = (ry * size.height) / radius;
+    final m = Matrix4.identity()
+      ..translateByDouble(center.dx, center.dy, 0, 1)
+      ..scaleByDouble(1, squash, 1, 1)
+      ..translateByDouble(-center.dx, -center.dy, 0, 1);
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = ui.Gradient.radial(
+          center,
+          radius,
+          [color, color.withValues(alpha: 0)],
+          [0, edge],
+          TileMode.clamp,
+          m.storage,
+        ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_StatCardGlass old) => old.tone != tone;
 }
 
 /// The small pulsing dot in front of the status word (`.statcard .st .d`).
