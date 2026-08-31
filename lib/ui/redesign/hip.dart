@@ -135,21 +135,22 @@ class HipWordmark extends StatelessWidget {
         alignment: PlaceholderAlignment.middle,
         // The chip's CSS em paddings resolve against its own font size.
         child: Builder(builder: (context) {
-          final em = .82 * size;
+          // `.wm .chip`: font-size .86em, weight 800, padding .113em .17em .107em.
+          final em = .86 * size;
           // `middle` centres on the full line box (descender included);
           // the CSS flexbox centres on the glyphs, so lift the chip a bit.
           return Transform.translate(
             offset: Offset(0, -.05 * size),
             child: Container(
               margin: EdgeInsets.only(left: .09 * em),
-              padding:
-                  EdgeInsets.fromLTRB(.17 * em, .1 * em, .17 * em, .12 * em),
+              padding: EdgeInsets.fromLTRB(
+                  .17 * em, .113 * em, .17 * em, .107 * em),
               decoration: BoxDecoration(
                 color: Brand.hsl(220, 95, 55),
                 borderRadius: BorderRadius.circular(.22 * em),
               ),
               child: Text('IP',
-                  style: Hip.mono(700, em,
+                  style: Hip.mono(800, em,
                       color: Colors.white,
                       letterSpacing: -.02 * em,
                       height: 1)),
