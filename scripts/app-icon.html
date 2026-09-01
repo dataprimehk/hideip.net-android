@@ -14,7 +14,7 @@
 <meta charset="UTF-8">
 <style>
 @font-face{ font-family:"Onest"; src:url("../assets/fonts/Onest-Variable.ttf"); font-weight:100 900; }
-@font-face{ font-family:"JBMono"; src:url("../assets/fonts/JetBrainsMono-Bold.ttf"); font-weight:700; }
+@font-face{ font-family:"JBMono"; src:url("../assets/fonts/JetBrainsMono-Variable.ttf"); font-weight:100 800; }
 html,body{ margin:0; width:1024px; height:1024px; background:transparent; }
 .tile{ width:1024px; height:1024px; display:grid; place-items:center; }
 .tile.full{ background:#0B0E14; }
@@ -44,8 +44,8 @@ if (v === 'fg') {
         style="font-family:'Onest';font-weight:700;letter-spacing:-5.76px"
         text-anchor="middle" fill="#FFFFFF">hide</text>
       <rect x="302" y="428" width="420" height="331" rx="60" fill="#1F68F9"></rect>
-      <text x="515" y="687" font-size="254"
-        style="font-family:'JBMono';font-weight:700;letter-spacing:-5.08px"
+      <text x="515" y="698" font-size="286"
+        style="font-family:'JBMono';font-weight:700;letter-spacing:-5.72px"
         text-anchor="middle" fill="#FFFFFF">IP</text>
     </svg></div>`;
 } else if (v === 'mono') {
@@ -54,23 +54,26 @@ if (v === 'fg') {
   root.innerHTML = `<div class="tile"><svg width="1024" height="1024" viewBox="0 0 1024 1024">
         <defs><mask id="knock">
           <rect x="269" y="329" width="486" height="366" rx="66" fill="white"></rect>
-          <text x="515" y="622" font-size="300"
-            style="font-family:'JBMono';font-weight:700;letter-spacing:-6px"
+          <text x="515" y="633" font-size="330"
+            style="font-family:'JBMono';font-weight:700;letter-spacing:-6.6px"
             text-anchor="middle" fill="black">IP</text>
         </mask></defs>
         <rect x="269" y="329" width="486" height="366" rx="66" fill="white" mask="url(#knock)"></rect>
       </svg></div>`;
 } else {
-  // iOS/legacy square: the full stack, proportions from the logo doc's
-  // 150px icon ("hide" 29/150, chip 44/150, gap 10/150).
-  const hide = 198, chip = 300, gap = 68;
-  root.innerHTML = `
-  <div class="tile full">
-    <div class="stack" style="gap:${gap}px">
-      <span class="hide" style="font-size:${hide}px">hide</span>
-      <span class="chip" style="font-size:${chip}px">IP</span>
-    </div>
-  </div>`;
+  // iOS/legacy square, from the logo doc's section 01-I "iOS scale"
+  // (adopted 21.8): the whole tile is visible on iOS, so the stack is
+  // drawn 1.40x the Android size. "hide" 269px, chip 588x463 rx 84,
+  // "IP" 400px; content 588x692 centred on the 1024 canvas.
+  root.innerHTML = `<div class="tile full"><svg width="1024" height="1024" viewBox="0 0 1024 1024">
+      <text x="515" y="361" font-size="269"
+        style="font-family:'Onest';font-weight:700;letter-spacing:-8.07px"
+        text-anchor="middle" fill="#FFFFFF">hide</text>
+      <rect x="218" y="394" width="588" height="463" rx="84" fill="#1F68F9"></rect>
+      <text x="516" y="772" font-size="400"
+        style="font-family:'JBMono';font-weight:700;letter-spacing:-8px"
+        text-anchor="middle" fill="#FFFFFF">IP</text>
+    </svg></div>`;
 }
 </script>
 </body>
