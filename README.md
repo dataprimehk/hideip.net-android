@@ -3,9 +3,7 @@
 A small, no-account VPN client. It runs a [sing-box](https://github.com/SagerNet/sing-box)
 core inside a system tunnel (`VpnService` on Android) and connects to servers
 you bring yourself, imported from a share link, a QR code, or a subscription
-URL. Android is the primary platform; an iOS port is underway in this repo
-(the app builds and runs, the packet tunnel extension is still being wired
-to the core).
+URL. Both the Android and the iOS app are built from this repo.
 
 There is no sign-up and no telemetry. Profiles live on the device. The point is
 to be a clean, auditable front end for a proxy core you already trust, not a
@@ -27,6 +25,55 @@ managed service.
 - A world map of exit locations. Tapping a country that has no node yet casts
   an anonymous vote (just the country code, no identifiers) for where to build
   next; the contract is in [docs/voting-api.md](docs/voting-api.md).
+
+## Download
+
+- **Google Play**: <https://play.google.com/store/apps/details?id=net.hideip.vpn>
+- **App Store**: <https://apps.apple.com/app/id6793134083>
+- **GitHub Releases**: <https://github.com/dataprimehk/hideip.net-app/releases>
+
+Every tagged release carries two APKs. Take the `arm64-v8a` one on any phone
+from the last several years; `armeabi-v7a` is only for older 32-bit devices.
+
+### Verify what you downloaded
+
+Each release also ships `SHA256SUMS.txt`. Put it next to the APK and run:
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS.txt
+```
+
+On macOS the command is `shasum -a 256 --ignore-missing -c SHA256SUMS.txt`.
+
+The GitHub APKs are signed with the same release key on every release, so a new
+build installs straight over the previous one and your profiles stay put. You
+can check the signing certificate yourself:
+
+```sh
+apksigner verify --print-certs hideip.net-1.1.0-arm64-v8a.apk
+```
+
+It must print:
+
+```
+Signer #1 certificate DN: CN=Dataprime LTD, O=Dataprime LTD, L=Hong Kong, C=HK
+Signer #1 certificate SHA-256 digest: 8980ca20cb32bd32e90cbb7bd66bfd42da291dd724386a593626192969ac3ae8
+```
+
+Google Play ships its own copy of the app, re-signed by Play App Signing, so a
+Play install and a GitHub install carry different signatures and will not
+update over one another. Pick one source and stay with it.
+
+### Obtainium
+
+If you use [Obtainium](https://github.com/ImranR98/Obtainium), add
+
+```
+https://github.com/dataprimehk/hideip.net-app
+```
+
+as a source. It tracks the GitHub releases and offers each new version as soon
+as it is tagged.
 
 ## Build
 

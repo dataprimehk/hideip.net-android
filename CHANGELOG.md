@@ -3,7 +3,7 @@
 Notable changes to the hideip.net app. The same history is published at
 https://hideip.net/apps/changelog.
 
-## 1.1.0 (2026-08-31)
+## 1.1.0 (2026-09-02)
 
 ### Added
 - Speed mode: WireGuard on hideip.net locations for Premium subscribers, with
