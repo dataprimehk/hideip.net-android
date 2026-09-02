@@ -5,46 +5,145 @@ https://hideip.net/apps/changelog.
 
 ## 1.1.0 (2026-09-02)
 
+Build 6 on Google Play and the App Store. iOS 14 or later.
+
 ### Added
-- Speed mode: WireGuard on hideip.net locations for Premium subscribers, with
-  automatic fallback to stealth protocols on networks where WireGuard is
-  blocked.
-- WireGuard imports: paste a config, open a .conf file, or scan it as a QR
-  code. Bringing your own WireGuard server is free.
-- QR scanning built into the import flow, with a plain-language camera note
-  before the system permission prompt.
-- A world map of locations with voting for the next hideip.net location.
-- Location search on the home screen.
-- Linked devices: one subscription shared across phone, browser and desktop,
-  paired with a QR code and no account.
-- Optional notifications on two separate channels: connection drops and voting
-  updates.
-- The home screen names the network and city beside the public IP, through a
-  lookup on hideip.net that stores nothing.
-- hideip.net app links open the app directly.
+- Speed mode for Premium: WireGuard on the hideip.net locations. The phone
+  generates its own keypair and registers only the public key, up to five
+  devices per subscription. Off by default. When the WireGuard handshake does
+  not complete, which is what a network that blocks WireGuard looks like, the
+  app switches back to the stealth profile on its own.
+- Bring your own WireGuard, free: paste an `[Interface]`/`[Peer]` config, open
+  a `.conf` file, scan it as a QR code, or use a `wireguard://` or `wg://` link.
+  The tunnel MTU is capped at 1280. A config whose `AllowedIPs` does not cover
+  the default route is refused instead of tunneling part of the traffic.
+- Open file on the import screen: a WireGuard config, a subscription file,
+  Clash YAML or sing-box JSON, minified or not.
+- Linked devices: a phone that holds a Premium subscription can approve a
+  browser extension or another client by scanning its pairing code or opening
+  a `hideip://link` URL, and can hand out a short code for clients without a
+  camera. Settings lists the linked devices and revokes any of them.
+- Search on the home screen, filtering every list including locked locations.
+- Recent servers lead the home list, and a server can be renamed.
+- Country and network operator next to the public IP, from hideip.net's own
+  `/v1/ip` endpoint.
+- Import links on `https://hideip.net/import` and `/add`, registered as app
+  links on both platforms, next to the `hideip://` scheme sellers already use.
+  A link only prefills the import screen; nothing is added until you press
+  the button.
+- Copy config on the server details, with UUIDs, passwords, keys, tokens and
+  subscription URLs redacted. The full config is available behind a
+  confirmation, on a clipboard entry that expires after a minute.
+- Three theme modes: light, dark and system.
+- Notifications section in Settings: the system permission is asked only after
+  an in-app explanation, and Android gets two channels (connection alerts,
+  voting updates) so each can be silenced on its own. Nothing is posted to
+  them in this release.
+- Offline state on the home screen, cancel while connecting, and a sheet that
+  explains a slow or failed connection.
 
 ### Changed
 - Every screen redesigned: home, locations, import, settings, world map,
-  Premium and onboarding, with light, dark and system themes.
-- Numbers everywhere in JetBrains Mono, sized for glanceability.
-- iOS now requires iOS 14 or later.
+  Premium and onboarding, with sheets instead of Material dialogs. Motion is
+  reduced when the system asks for it.
+- The world map shows the vote quota and its reset date, lets you withdraw a
+  vote, and marks the location that won.
+- The QR scanner opens inline on the import screen, with a camera note before
+  the system permission prompt.
+- The first Connect raises the VPN consent on its own. The notification
+  permission has its own moment in Settings or after the first vote, and the
+  connect timers start once the consent is answered.
+- JetBrains Mono ships as one variable font, so addresses, prices and the IP
+  chip draw at the weight the design asks for. The static cuts in 1.0.0 drew
+  every weight as Regular.
+- New launcher icon on both platforms.
+- The sing-box core (v1.13.12) is built from pinned source by
+  `scripts/build-libbox.sh` instead of being pulled from JitPack. The recipe,
+  the inputs and the SHA-256 of every output are in `native-core/`, and a
+  workflow runs the same build on CI.
+- Android release builds fail when the upload key is not configured, instead
+  of signing with the debug key.
+- iOS 14.0 is the minimum, up from 13.0, for the file picker.
+
+### Fixed
+- A subscription URL that answered 404 or 410 after a renewal dropped every
+  Premium server while the store went on charging. The app now re-provisions
+  once from the stored purchase proof, and reports the subscription as
+  expired only when the backend refuses that proof.
+- The VPN consent and the notification permission were raised together on the
+  first Connect, and the 25 second connect timer could fail the attempt while
+  the consent was still on screen.
+- A link that opened the app on a cold start was handled twice.
+- A hideip.net import link pasted or scanned into the importer was fetched as
+  a subscription URL. It is now unwrapped.
+- A crash in the vote sync when two votes drained at the same time.
+- The Always-on VPN notice after a disconnect was the last Material dialog on
+  the redesigned screens.
 
 ### Security
-- Profiles migrated to encrypted on-device storage.
-- Import parsing hardened: response size ceilings, strict endpoint checks, and
-  no third-party geo services.
-- The server catalog is signed; a build without the production verification key
-  refuses the catalog rather than trusting it.
+- Profiles, subscription URLs and the WireGuard keypair are encrypted at rest
+  with AES-GCM; the keys live in the Android Keystore or the iOS Keychain. The
+  Android service keeps its last tunnel config in an encrypted vault and
+  migrates the plain file on first read. The iOS packet tunnel sets file
+  protection on its config and keeps it out of backups.
+- Android cloud backup and device-to-device transfer are disabled. A restored
+  backup would clone the WireGuard device identity onto a second phone.
+- Subscription and catalog fetches go through a bounded HTTP client: the host
+  is resolved first and refused when it points at a loopback, private,
+  link-local or metadata address; the TLS socket is pinned to the checked
+  address; redirects repeat the check and cannot downgrade to plain HTTP;
+  bodies stop at 2 MB; compressed responses are refused.
+- The subscription parser stops at 500 profiles, 1000 entries and 32 levels of
+  nesting, never echoes the input in an error, and runs off the UI isolate.
+- An import link may only carry a payload the parser itself accepts; anything
+  else is refused with a plain toast that does not repeat it.
+- Premium servers can come from a signed catalog: Ed25519 signature, an epoch
+  that only moves forward, a 512 KB ceiling, and no client User-Agent on the
+  mirror requests. A release build without the production verification key
+  skips the catalog and uses the subscription URL.
+- The sing-box core is built from a recorded commit with a pinned Go
+  toolchain, `go mod verify` and `govulncheck` on source and binaries.
 
 ### Privacy
-- Three anonymous one-time counters (first open, first profile, first connect)
-  carrying only the event name and the platform, with an off switch in
-  Settings. The stores' "no data collected" declarations remain accurate.
+- No third-party lookups. 1.0.0 asked ipify for the public IP and a
+  geolocation service about imported servers; both now go to hideip.net's own
+  `/v1/ip`, which already sees the same address during provisioning. Hostnames
+  are resolved on the phone, so only an address leaves it.
+- Three anonymous counters, each sent once per install: first open, first
+  imported profile, first successful connection. The request carries the event
+  name and the platform and nothing else, and a switch under Settings, Privacy
+  turns it off. The contract is in `docs/app-events-api.md`. The stores' "no
+  data collected" declarations stay accurate.
 
 ## 1.0.0 (2026-08-03)
 
-First public release. VLESS (Reality, xtls-rprx-vision), VMess, Shadowsocks,
-Trojan, Hysteria2, TUIC, AnyTLS, ShadowTLS, SOCKS and HTTP(S) imports,
-subscription URLs, the sing-box tunnel core, latency measurements, and optional
-Premium locations. Android on Google Play (2026-08-03), iOS on the App Store
-(2026-08-11).
+First public release. Android on Google Play on 2026-08-03, iOS on the App
+Store on 2026-08-11.
+
+### Added
+- Imports of `vless://` (Reality, `xtls-rprx-vision`), `vmess://`, `ss://`
+  (with the ShadowTLS plugin as a chained outbound), `trojan://`,
+  `hysteria2://`, `tuic://`, `anytls://`, `socks://` and `http(s)://` links.
+- Subscription URLs: plain and base64 line lists, Clash YAML and sing-box JSON.
+  Subscriptions refresh on launch, a re-import replaces the group instead of
+  duplicating it, and the provider's plan status (traffic, expiry, panel link)
+  is read from the `subscription-userinfo` headers.
+- QR scan through ZXing, so it works on phones without Google Play Services.
+- `hideip://` links, so a seller panel can open the importer with a payload.
+- The sing-box core in an Android `VpnService` and in an iOS packet tunnel
+  extension, with the TUN MTU at 1280.
+- Latency check for every server before connecting.
+- Public IP readout on the home screen.
+- Kill switch: the tunnel is recovered instead of leaking when it drops.
+- Android Always-on VPN: reconnect on system starts when opted in, with a
+  notice while the system holds traffic.
+- Foreground notification with a Disconnect action and traffic counters.
+- World map home with anonymous country voting: the country code and nothing
+  else, queued offline and synced later. The contract is in
+  `docs/voting-api.md`.
+- Premium locations: monthly and yearly plans through StoreKit 2 on iOS and
+  Play Billing on Android, provisioned anonymously from the purchase proof.
+  Shown only where the plans catalog is live.
+- Dark mode and onboarding.
+- Release builds ship arm64-v8a and armeabi-v7a only; analyze and tests run on
+  CI.

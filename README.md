@@ -1,9 +1,10 @@
 # hideip.net
 
 A small, no-account VPN client. It runs a [sing-box](https://github.com/SagerNet/sing-box)
-core inside a system tunnel (`VpnService` on Android) and connects to servers
-you bring yourself, imported from a share link, a QR code, or a subscription
-URL. Both the Android and the iOS app are built from this repo.
+core inside a system tunnel (a `VpnService` on Android, a packet tunnel
+extension on iOS) and connects to servers you bring yourself, imported from a
+share link, a QR code, a config file or a subscription URL. Both the Android
+and the iOS app are built from this repo.
 
 There is no sign-up and no telemetry. Profiles live on the device. The point is
 to be a clean, auditable front end for a proxy core you already trust, not a
@@ -12,19 +13,29 @@ managed service.
 ## Features
 
 - Imports `vless://`, `vmess://`, `ss://`, `trojan://`, `hysteria2://`,
-  `tuic://`, `anytls://`, `socks://` and `http(s)://` proxy links, plus
-  subscription URLs that return a list of those.
-- VLESS over Reality with `xtls-rprx-vision`, Shadowsocks, Trojan, VMess and the
-  rest, all handled by the sing-box core.
+  `tuic://`, `anytls://`, `socks://`, `http(s)://` and `wireguard://` links,
+  WireGuard `.conf` files, and subscription URLs or files in plain, base64,
+  Clash YAML or sing-box JSON form.
+- VLESS over Reality with `xtls-rprx-vision`, Shadowsocks (with ShadowTLS),
+  Trojan, VMess and the rest, all handled by the sing-box core. WireGuard runs
+  as a sing-box endpoint.
 - QR import that works on devices without Google Play Services (uses ZXing
   directly, so it decodes on GrapheneOS and other de-Googled ROMs too).
 - A foreground tunnel with an ongoing notification, a Disconnect action, and
-  live up/down traffic counters.
-- Server latency check before you connect.
-- Public-IP readout so you can confirm the tunnel actually changed your exit IP.
+  live up/down traffic counters. Kill switch and Android Always-on support.
+- Server latency check before you connect, search over the server list,
+  server renaming.
+- Public IP readout with country and network, from hideip.net's own endpoint,
+  so you can confirm the tunnel actually changed your exit IP.
 - A world map of exit locations. Tapping a country that has no node yet casts
   an anonymous vote (just the country code, no identifiers) for where to build
   next; the contract is in [docs/voting-api.md](docs/voting-api.md).
+- Optional Premium locations, with Speed mode (WireGuard, falling back to the
+  stealth profile where it is blocked) and linked devices: one subscription
+  shared with a browser extension or another client, approved from the phone.
+- Profiles and keys encrypted at rest; Android backups disabled so a restore
+  cannot clone the device identity.
+- Light, dark and system themes.
 
 ## Download
 
@@ -86,9 +97,23 @@ flutter build apk      # release APK
 flutter build appbundle
 ```
 
-For iOS you also need a full Xcode installation. The sing-box core framework
-is a build artifact, not committed; build it once with
-`scripts/build-libbox-ios.sh` (requires Go 1.23+), then `flutter build ios`.
+The sing-box core is a build artifact, not committed, and the app build does
+not download it. Build it once from the pinned source with
+
+```sh
+scripts/build-libbox.sh --all     # or --android / --ios
+```
+
+The script needs the exact Go version recorded in `native-core/source.env`,
+plus the Android NDK for the AAR and a full Xcode installation for the iOS
+framework. It verifies the sing-box commit, the module checksums and
+`govulncheck` before installing `android/app/libs/libbox.aar` and
+`ios/Frameworks/Libbox.xcframework`. `scripts/verify-libbox-artifacts.sh`
+checks the installed artifacts against `native-core/verified-1.1.0.txt`.
+
+Android release builds need `android/key.properties` pointing at a signing
+keystore; without it the release task fails instead of signing with the debug
+key. Debug builds need no key.
 
 The launcher icons are generated from `assets/icon/` with:
 
@@ -98,14 +123,22 @@ dart run flutter_launcher_icons
 
 ### Project layout
 
-- `lib/core/` parsing, sing-box config generation, profile storage, voting,
-  IP and ping helpers.
-- `lib/ui/redesign/` the screens (home with the world map, locations, import
-  and QR scan, onboarding, settings) and the shared widget kit.
+- `lib/core/` parsing, sing-box config generation, encrypted profile storage,
+  subscriptions, the signed catalog, WireGuard (Speed mode and imports),
+  device linking, voting, IP and ping helpers.
+- `lib/state/` the app state and the connection flow.
+- `lib/ui/redesign/` the screens (home with the world map, locations, server
+  details, import and QR scan, linked devices, Premium, onboarding, settings)
+  and the shared widget kit.
 - `lib/vpn_controller.dart` the Dart side of the `MethodChannel`.
-- `android/.../HideipVpnService.kt` the `VpnService` and foreground notification.
-- `android/.../MainActivity.kt` the native bridge: VPN consent and the
-  Android 13+ notification permission.
+- `android/.../HideipVpnService.kt` the `VpnService`, the kill switch and the
+  foreground notification.
+- `android/.../MainActivity.kt` the native bridge: VPN consent, the Android
+  13+ notification permission and the sensitive clipboard.
+- `ios/PacketTunnel/` the network extension that runs the core on iOS.
+- `native-core/` the pinned inputs and the verification record for the
+  sing-box core build.
+- `docs/` the voting and app-events API contracts.
 
 ## Permissions
 
