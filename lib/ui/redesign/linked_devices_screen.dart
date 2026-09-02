@@ -523,7 +523,7 @@ class _LinkCodeSheetState extends State<_LinkCodeSheet> {
     });
   }
 
-  /// "09:58" — the countdown, mono like every other number in the app.
+  /// "09:58": the countdown, mono like every other number in the app.
   String get _countdown {
     final m = _left.inMinutes.toString().padLeft(2, '0');
     final s = (_left.inSeconds % 60).toString().padLeft(2, '0');
